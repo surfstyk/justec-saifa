@@ -235,9 +235,10 @@ async function processPaymentConfirmation(data: PaymentConfirmationData): Promis
   // Push booking confirmation into session history so the frontend sees it on reconnect
   if (session) {
     const config = getConfig();
+    const ownerFirst = config.client.owner.split(' ')[0];
     const confirmationMessage: Message = {
       role: config.persona.assistant_role,
-      content: null,
+      content: `Great news — your payment has been received and your ${config.services.name} is confirmed for ${data.slot_display}. ${ownerFirst} will review our conversation beforehand so you can dive right in. Looking forward to it!`,
       structured: [
         {
           type: 'booking_confirmed',

@@ -64,7 +64,17 @@ export function buildMeetingRoomPrompt(session: Session): {
   messages: LLMMessage[];
   tools: ToolDefinition[];
 } {
-  const system = buildSystemPrompt('meeting_room');
+  let system = buildSystemPrompt('meeting_room');
+
+  // Inject payment/booking state so the LLM knows what has already happened
+  if (session.payment_status === 'completed') {
+    const config = getConfig();
+    const ownerFirst = config.client.owner.split(' ')[0];
+    const bookingLine = session.booking_time
+      ? ` Booking confirmed for ${session.booking_time}.`
+      : '';
+    system += `\n\n[SESSION STATE: Payment completed via ${session.payment_provider || 'unknown'}.${bookingLine} Do NOT ask about payment, deposits, or booking again. The visitor's session is fully secured. If they ask about their booking, confirm the details. Focus on wrapping up warmly or answering any remaining questions. ${ownerFirst} will review the conversation before the meeting.]`;
+  }
 
   // Full history for meeting room (visitor has earned it)
   const messages: LLMMessage[] = session.history
@@ -74,5 +84,11 @@ export function buildMeetingRoomPrompt(session: Session): {
       content: msg.content!,
     }));
 
-  return { system, messages, tools: [...getMeetingRoomTools(), SIGNAL_TOOL] };
+  // Strip payment/calendar tools if payment is already completed — no reason to offer them
+  const allTools = [...getMeetingRoomTools(), SIGNAL_TOOL];
+  const tools = session.payment_status === 'completed'
+    ? allTools.filter(t => t.name !== 'request_payment' && t.name !== 'check_calendar_availability' && t.name !== 'request_phone')
+    : allTools;
+
+  return { system, messages, tools };
 }
