@@ -70,8 +70,8 @@ const DEFAULTS: AppConfig = {
     lists: { lobby: 'Lobby', meeting_room: 'Meeting Room', phone_captured: 'Phone Captured', booked: 'Booked', completed: 'Completed' },
   },
   notification: {
-    activity_bot_token_path: '/etc/justec-public/credentials/justec_bot_token',
-    admin_bot_token_path: '/etc/justec-public/credentials/admin_bot_token',
+    activity_bot_token_path: '/etc/justec-public/credentials/justec_saifa_bot_token',
+    admin_bot_token_path: '/etc/justec-public/credentials/justec_saifa_bot_token',
     chat_id: '1465455370',
   },
   greetings: {
