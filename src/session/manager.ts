@@ -3,7 +3,7 @@ import { createHash } from 'crypto';
 import { getConfig } from '../config.js';
 import { getSessionStore, getActiveSessionCount, getQueueLength, addToQueue, removeFromQueue, promoteFromQueue } from './store-memory.js';
 import { persistSession, persistMessage } from '../db/conversations.js';
-import type { Session, Language, CloseReason, Message, SessionStatus } from '../types.js';
+import type { Session, Language, CloseReason, SessionStatus } from '../types.js';
 
 export function hashIp(ip: string): string {
   return createHash('sha256').update(ip + 'justec-salt').digest('hex').slice(0, 16);

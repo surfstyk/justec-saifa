@@ -41,7 +41,7 @@ const TERMINATION_RESPONSES: Record<string, string> = {
 export function evaluateGuard(
   session: Session,
   threatLevel: 0 | 1 | 2 | 3,
-  reason?: string,
+  _reason?: string,
 ): GuardAction {
   let newLevel = session.guard_level;
 
@@ -86,7 +86,6 @@ export function evaluateGuard(
       };
 
     case 3: {
-      const config = getConfig();
       const lang = session.language;
       const message = TERMINATION_RESPONSES[lang] || TERMINATION_RESPONSES.en;
       return {

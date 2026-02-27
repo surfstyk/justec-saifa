@@ -21,7 +21,7 @@ import {
   writeStructuredMessage, writeSessionTerminated, writeTierChange,
   writeBudgetWarning, writeBudgetExhausted, writeError, writeStreamEnd,
 } from '../sse/writer.js';
-import type { Session, Message, ChatRequest, QualificationSignals, LLMMessage, LLMChatRequest, ToolDefinition } from '../types.js';
+import type { Session, Message, ChatRequest, QualificationSignals, LLMChatRequest, ToolDefinition } from '../types.js';
 
 const router = Router();
 const MAX_TOOL_ROUNDS = 3;

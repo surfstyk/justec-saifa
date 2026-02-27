@@ -41,12 +41,12 @@ const HOSTILITY_PATTERNS = [
 const MAX_MESSAGE_LENGTH = 2000;
 const RAPID_FIRE_MS = 3000;
 
-let lastMessageTime = new Map<string, number>();
+const lastMessageTime = new Map<string, number>();
 
 export function filterInput(
   text: string,
   sessionId: string,
-  ipHash: string,
+  _ipHash: string,
 ): InputFilterResult {
   // Length check
   if (text.length > MAX_MESSAGE_LENGTH) {

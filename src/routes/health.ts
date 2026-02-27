@@ -6,7 +6,6 @@ const startTime = Date.now();
 
 // Public health check
 router.get('/api/health', (_req, res) => {
-  const config = getConfig();
   res.json({
     status: 'ok',
     version: '0.1.0',

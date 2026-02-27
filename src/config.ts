@@ -128,7 +128,7 @@ export function loadConfig(): AppConfig {
       dev_mode: parsed.dev_mode ?? (process.env.DEV_MODE === 'true'),
       port: parsed.port ?? parseInt(process.env.PORT || '3100', 10),
     };
-  } catch (err) {
+  } catch {
     console.warn(`[config] Could not load config from ${configPath}, using defaults`);
 
     _config = {
