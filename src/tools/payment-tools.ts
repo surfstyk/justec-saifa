@@ -1,5 +1,5 @@
 import { getAvailableSlots } from '../integrations/calendar.js';
-import { createTentativeHold, deleteTentativeHold } from '../integrations/calendar-holds.js';
+import { createTentativeHold, deleteTentativeHold, getHeldSlot } from '../integrations/calendar-holds.js';
 import { createCheckoutSession } from '../integrations/stripe.js';
 import { createOrder, getPayPalClientId } from '../integrations/paypal.js';
 import { getConfig } from '../config.js';
@@ -26,12 +26,21 @@ export async function handleRequestPayment(
   }
 
   try {
-    // Verify slot is still available
+    // Verify slot is still available (check available slots, then our own holds)
     const slots = await getAvailableSlots();
-    const selectedSlot = slots.find(s => s.id === slotId);
+    let selectedSlot = slots.find(s => s.id === slotId);
+
+    // If not in available slots, check if this session owns a hold for it
+    // (our own tentative hold makes it appear "busy" to getAvailableSlots)
+    if (!selectedSlot) {
+      selectedSlot = getHeldSlot(session.id, slotId) ?? undefined;
+      if (selectedSlot) {
+        console.log(`[payment-tools] Slot ${slotId} resolved from session hold`);
+      }
+    }
 
     if (!selectedSlot) {
-      // Delete stale hold for the unavailable slot
+      // Genuinely unavailable — delete stale hold
       const slotHolds = (session.metadata?.slot_holds as Record<string, string>) || {};
       if (slotHolds[slotId]) {
         deleteTentativeHold(slotHolds[slotId]).catch(e =>

@@ -1,5 +1,5 @@
 import { getAvailableSlots, createBookingEvent } from '../integrations/calendar.js';
-import { createTentativeHold } from '../integrations/calendar-holds.js';
+import { createTentativeHold, getHeldSlot } from '../integrations/calendar-holds.js';
 import { moveToBooked } from '../integrations/trello-cards.js';
 import { getConfig } from '../config.js';
 import type { Session, StructuredMessage } from '../types.js';
@@ -130,9 +130,16 @@ export async function handleBookAppointment(
   }
 
   try {
-    // Get fresh slots to find the selected one
+    // Get fresh slots to find the selected one (also check our own holds)
     const slots = await getAvailableSlots();
-    const selectedSlot = slots.find((s: AvailableSlot) => s.id === slotId);
+    let selectedSlot: AvailableSlot | undefined = slots.find((s: AvailableSlot) => s.id === slotId);
+
+    if (!selectedSlot) {
+      selectedSlot = getHeldSlot(session.id, slotId) ?? undefined;
+      if (selectedSlot) {
+        console.log(`[calendar-tools] Slot ${slotId} resolved from session hold`);
+      }
+    }
 
     if (!selectedSlot) {
       return {

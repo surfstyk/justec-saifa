@@ -7,12 +7,13 @@ const CALENDAR_API = 'https://www.googleapis.com/calendar/v3';
 
 // ── Types ────────────────────────────────────────────────
 
-interface TentativeHold {
+export interface TentativeHold {
   holdEventId: string;
   sessionId: string;
   slotId: string;
   slotStart: string;
   slotEnd: string;
+  slotDisplay: Record<string, string>;
   createdAt: number;
 }
 
@@ -62,6 +63,7 @@ export async function createTentativeHold(
     slotId: slot.id,
     slotStart: slot.start,
     slotEnd: slot.end,
+    slotDisplay: slot.display,
     createdAt: Date.now(),
   });
 
@@ -107,6 +109,20 @@ export async function deleteHoldsForSession(sessionId: string): Promise<void> {
 
 export function getHoldsForSession(sessionId: string): TentativeHold[] {
   return [...holds.values()].filter(h => h.sessionId === sessionId);
+}
+
+// ── Resolve a held slot back to AvailableSlot ────────────
+
+export function getHeldSlot(sessionId: string, slotId: string): AvailableSlot | null {
+  const hold = [...holds.values()].find(h => h.sessionId === sessionId && h.slotId === slotId);
+  if (!hold) return null;
+
+  return {
+    id: hold.slotId,
+    start: hold.slotStart,
+    end: hold.slotEnd,
+    display: hold.slotDisplay as AvailableSlot['display'],
+  };
 }
 
 // ── Sweep expired holds (safety net) ─────────────────────
