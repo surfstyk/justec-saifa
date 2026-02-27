@@ -2,7 +2,7 @@
 
 **Project**: Justec Virtual Front Desk (powered by SAIFA)
 **Owner**: Backend Team
-**Version**: v0.3.0
+**Version**: v0.4.0
 **Date**: 2026-02-27
 **Status**: Active — verified against codebase
 
@@ -13,6 +13,7 @@
 | v0.1.0 | 2026-02-26 | Initial draft — all 9 integration points defined |
 | v0.2.0 | 2026-02-26 | Fix: explicit stream_end event, typed action field (replaces magic strings), POST /close (replaces DELETE), structured messages in history replay, processing event for typing indicator, language switch endpoint, session creation on page load, Stripe embedded checkout, 2s queue polling |
 | v0.3.0 | 2026-02-27 | Full audit against codebase: corrected payment flow (redirect URLs, not embedded), fixed structured message payloads (calendar_slots, phone_request, booking_confirmed), removed unimplemented types (link, conversation_end, consent_request), documented PayPal return endpoint, corrected session_terminated payload, fixed error codes, updated budget tiers to match config, corrected rate limit messages, added payment/booking fields to state endpoint |
+| v0.4.0 | 2026-02-27 | Second audit: fixed payment_request payload (nested `providers` object, not flat URLs), restored consent_request and conversation_end structured messages (both implemented), fixed session_terminated reason (always `"security"`), added missing calendar_slots fields (timezone, duration_minutes, instruction), added missing phone_request fields (prompt, preferred_messenger, placeholder), fixed score classification example value, corrected status/state endpoint status values (never `"closed"`), fixed rate limit retry_after_seconds values, documented conversation_end in termination/exhaustion streams |
 
 ---
 
@@ -255,9 +256,8 @@ A message contains EITHER `text` (visitor typed something) OR `action` (visitor 
 |------|---------|-------------|
 | `slot_selected` | `{ "slot_id": "slot-2", "display": "Thursday, March 6 at 2:00 PM" }` | Visitor clicks a calendar slot from `calendar_slots` structured message |
 | `phone_submitted` | `{ "phone": "+491701234567" }` | Visitor submits phone number from `phone_request` structured message |
-| `payment_provider_selected` | `{ "provider": "stripe" }` or `{ "provider": "paypal" }` | Visitor clicks a payment button from `payment_request` structured message |
 
-> **Note:** `consent_response` and `language_changed` actions should use their dedicated endpoints (`POST /api/session/:id/consent` and `POST /api/session/:id/language`). Sending them as message actions will not trigger an LLM response.
+> **Note:** `consent_response` and `language_changed` actions should use their dedicated endpoints (`POST /api/session/:id/consent` and `POST /api/session/:id/language`). Sending them as message actions will pass through to the LLM but is not the intended flow.
 
 **Behavioral signals reference:**
 
@@ -316,9 +316,10 @@ data: {}
 
 1. **`processing`** — Sent immediately when the backend begins handling the request (before any LLM call). The frontend shows the typing indicator (three pulsing dots) on this event. This eliminates dead air between the POST and first token.
 2. **`token`** — Streamed response tokens. Frontend hides the typing indicator on the first `token` event and begins rendering text.
-3. **`message_complete`** — End of Justec's text response. May be followed by metadata events.
-4. **Metadata events** — `structured_message`, `tier_change`, `budget_warning`, etc. Zero or more.
-5. **`stream_end`** — **Terminal event.** The stream is complete. The frontend MUST stop reading on this event. The HTTP response body closes immediately after. Always the last event in every stream — including error streams and termination streams.
+3. **`structured_message`** — Rich UI components (calendar slots, phone input, payment, etc.). These can appear mid-stream when tool calls complete, or after `message_complete` for metadata messages (consent request, conversation end).
+4. **`message_complete`** — End of Justec's text response. May be followed by metadata events.
+5. **Metadata events** — `consent_request`, `conversation_end`, `tier_change`, `budget_warning`, etc. Zero or more.
+6. **`stream_end`** — **Terminal event.** The stream is complete. The frontend MUST stop reading on this event. The HTTP response body closes immediately after. Always the last event in every stream — including error streams and termination streams.
 
 Each SSE event has an `event` type and a JSON `data` payload. See [Section 17: SSE Event Reference](#17-sse-event-reference) for the complete event catalog.
 
@@ -361,7 +362,7 @@ Per-session limit:
 {
   "error": "rate_limited",
   "message": "Too many messages. Please wait before sending another.",
-  "retry_after_seconds": 5
+  "retry_after_seconds": 60
 }
 ```
 
@@ -370,9 +371,11 @@ Per-IP limit:
 {
   "error": "rate_limited",
   "message": "Too many requests from your network. Please try again later.",
-  "retry_after_seconds": 30
+  "retry_after_seconds": 1800
 }
 ```
+
+> **Note:** The per-IP `retry_after_seconds` is calculated dynamically based on the remaining time in the 1-hour sliding window. The value shown above is illustrative.
 
 Token budget exhausted (pre-stream check):
 ```json
@@ -471,7 +474,7 @@ Returns the full session state. Useful for the frontend to check status after re
     "behavioral": 25,
     "explicit": 32,
     "fit": 15,
-    "classification": "qualified"
+    "classification": "hot"
   },
   "visitor": {
     "name": "Marcus",
@@ -497,7 +500,7 @@ Returns the full session state. Useful for the frontend to check status after re
 | Field | Type | Description |
 |-------|------|-------------|
 | `session_id` | string | Session UUID |
-| `status` | string | `"active"` or `"closed"` |
+| `status` | string | `"active"` or `"queued"` (closed sessions return 410 before reaching this endpoint) |
 | `tier` | string | `"lobby"` or `"meeting_room"` |
 | `language` | string | Current session language (`en`, `de`, `pt`) |
 | `consent` | boolean | Whether GDPR consent has been granted |
@@ -538,6 +541,8 @@ Returns the full session state. Useful for the frontend to check status after re
 
 The LLM can trigger tool calls that result in **structured message blocks** within the SSE stream. These are not plain text — they carry typed data that the frontend renders as rich UI components.
 
+Additionally, the backend emits metadata structured messages (`consent_request`, `conversation_end`) after `message_complete` based on session state.
+
 ### SSE Event: `structured_message`
 
 ```
@@ -567,7 +572,10 @@ Presented when Justec offers booking times. **Slot scarcity**: only 1 slot is re
         }
       }
     ],
-    "language": "en"
+    "language": "en",
+    "timezone": "Europe/Lisbon",
+    "duration_minutes": 60,
+    "instruction": "Select a time that works for you."
   }
 }
 ```
@@ -580,6 +588,9 @@ Presented when Justec offers booking times. **Slot scarcity**: only 1 slot is re
 | `slots[].end` | string | ISO 8601 end time |
 | `slots[].display` | object | Localized display strings keyed by language code |
 | `language` | string | Current session language |
+| `timezone` | string | IANA timezone (e.g., `"Europe/Lisbon"`) |
+| `duration_minutes` | number | Slot duration in minutes (e.g., `60`) |
+| `instruction` | string | Localized instruction text for the visitor |
 
 **Frontend renders:** Clickable time slot cards/buttons. Use `slots[].display[language]` for the visible text. When the visitor selects a slot, send a structured action:
 
@@ -596,7 +607,7 @@ Presented when Justec offers booking times. **Slot scarcity**: only 1 slot is re
 
 ### Type: `payment_request`
 
-Presented when Justec requests the booking deposit. The backend creates checkout sessions with both providers and returns redirect URLs.
+Presented when Justec requests the booking deposit. The backend creates payment sessions with both providers and returns their credentials.
 
 ```json
 {
@@ -606,8 +617,17 @@ Presented when Justec requests the booking deposit. The backend creates checkout
     "currency": "eur",
     "display_amount": "€50.00",
     "description": "Strategy session deposit — credited toward your first engagement",
-    "stripe_checkout_url": "https://checkout.stripe.com/c/pay/cs_live_...",
-    "paypal_approve_url": "https://www.paypal.com/checkoutnow?token=ORDER-ABC123",
+    "providers": {
+      "stripe": {
+        "client_secret": "pi_xxx_secret_xxx",
+        "publishable_key": "pk_live_xxx"
+      },
+      "paypal": {
+        "approve_url": "https://www.paypal.com/checkoutnow?token=ORDER-ABC123",
+        "order_id": "ORDER-ABC123",
+        "client_id": "AaBbCcDd..."
+      }
+    },
     "booking_summary": {
       "date": "Thursday, March 6 at 2:00 PM (Lisbon)",
       "duration": "60 minutes",
@@ -623,18 +643,24 @@ Presented when Justec requests the booking deposit. The backend creates checkout
 | `currency` | string | ISO currency code (`eur`) |
 | `display_amount` | string | Formatted amount for display (e.g., `"€50.00"`) |
 | `description` | string | Payment description |
-| `stripe_checkout_url` | string \| null | Stripe Checkout redirect URL. `null` if Stripe unavailable. |
-| `paypal_approve_url` | string \| null | PayPal approval redirect URL. `null` if PayPal unavailable. |
+| `providers` | object | Available payment providers. Each key is present only if that provider is available. |
+| `providers.stripe` | object \| absent | Stripe payment credentials |
+| `providers.stripe.client_secret` | string | Stripe PaymentIntent client secret for embedded checkout |
+| `providers.stripe.publishable_key` | string | Stripe publishable key |
+| `providers.paypal` | object \| absent | PayPal payment credentials |
+| `providers.paypal.approve_url` | string | PayPal approval redirect URL |
+| `providers.paypal.order_id` | string | PayPal order ID |
+| `providers.paypal.client_id` | string | PayPal client ID (for JS SDK initialization, may be absent) |
 | `booking_summary` | object | Summary of the appointment being booked |
-| `booking_summary.date` | string | Display date of the booking |
+| `booking_summary.date` | string | Display date of the booking (localized) |
 | `booking_summary.duration` | string | Duration display (e.g., `"60 minutes"`) |
 | `booking_summary.with` | string | Name of the person the meeting is with |
 
-**Frontend renders:** A styled payment card with booking summary and two payment buttons:
-- **"Pay with Card"** → Opens `stripe_checkout_url` (redirect to Stripe Checkout)
-- **"Pay with PayPal"** → Opens `paypal_approve_url` (redirect to PayPal)
+**Frontend renders:** A styled payment card with booking summary and payment options:
+- **Stripe**: Use the `client_secret` and `publishable_key` with Stripe.js for embedded checkout, or redirect to Stripe Checkout
+- **PayPal**: Open `approve_url` (redirect to PayPal) or use the PayPal JS SDK with `client_id` and `order_id`
 
-Both redirect the visitor away from the page. After payment, they are redirected back (see [Section 14: Payment Flow](#14-payment-flow--webhooks)).
+After payment, the visitor is redirected back (see [Section 14: Payment Flow](#14-payment-flow--webhooks)).
 
 ### Type: `phone_request`
 
@@ -644,16 +670,22 @@ When Justec asks for a mobile number (typically at booking time).
 {
   "type": "phone_request",
   "payload": {
-    "language": "en"
+    "language": "en",
+    "prompt": "Please enter your phone number so we can reach you.",
+    "preferred_messenger": "WhatsApp",
+    "placeholder": "+1 555 000 0000"
   }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `language` | string | Current session language. Use this to localize the phone input UI. |
+| `language` | string | Current session language |
+| `prompt` | string | Localized prompt text for the phone input |
+| `preferred_messenger` | string | Preferred messaging platform (e.g., `"WhatsApp"`) — display as hint |
+| `placeholder` | string | Localized placeholder for the phone input field |
 
-**Frontend renders:** A phone input field with country code prefix detection and a submit button. The prompt text and preferred messenger information come from the LLM's text response (streamed via `token` events in the same message). When submitted:
+**Frontend renders:** A phone input field with the `placeholder` text, a label using `prompt`, and optionally a note about the `preferred_messenger`. When submitted:
 
 ```json
 {
@@ -712,6 +744,62 @@ Sent when a booking is successfully completed — either directly via calendar t
 
 **Frontend renders:** A confirmation card with a checkmark, booking details, and payment summary (if from payment flow).
 
+> **Note:** The two `booking_confirmed` shapes have different fields. The frontend should handle both: check for `slot` (direct booking) or `slot_start` (payment flow) to determine the variant.
+
+### Type: `consent_request`
+
+Emitted automatically after the first assistant response if GDPR consent is still pending. This appears after `message_complete` in the stream.
+
+```json
+{
+  "type": "consent_request",
+  "payload": {
+    "text": "We store this conversation to improve our service. You can read our privacy policy for details.",
+    "privacy_url": "https://surfstyk.com/privacy",
+    "options": {
+      "accept": "I agree",
+      "decline": "No thanks"
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | string | Localized consent explanation text |
+| `privacy_url` | string | URL to the privacy policy |
+| `options.accept` | string | Localized label for the accept button |
+| `options.decline` | string | Localized label for the decline button |
+
+**Frontend renders:** A consent banner or inline card with the `text`, a link to `privacy_url`, and two buttons using the `options` labels. When the visitor responds, call `POST /api/session/:id/consent` (see [Section 10](#10-gdpr-consent)).
+
+> **Note:** This is emitted **once** — only after the first assistant response when `consent` is still `"pending"`. It will not appear in subsequent messages.
+
+### Type: `conversation_end`
+
+Emitted when the conversation is forcibly ended — either by security guard termination or budget exhaustion. This appears alongside `session_terminated` or `budget_exhausted` events.
+
+```json
+{
+  "type": "conversation_end",
+  "payload": {
+    "reason": "security",
+    "message": "If you'd like to reach us, you can call our office.",
+    "show_contact": true,
+    "phone": "+351 XXX XXX XXX"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `reason` | string | `"security"` or `"budget_exhausted"` |
+| `message` | string | Localized end-of-conversation message |
+| `show_contact` | boolean | Whether to display contact information |
+| `phone` | string | Phone number for direct contact |
+
+**Frontend renders:** A conversation-ended card with the message and (if `show_contact` is true) the phone number as a clickable `tel:` link.
+
 ---
 
 ## 9. Budget & Rate Limit Signals
@@ -747,7 +835,7 @@ event: budget_exhausted
 data: {"tokens_used": 30012, "budget_total": 30000}
 ```
 
-After this event, further message requests will receive a 429 response.
+This is immediately followed by a `conversation_end` structured message (see [Section 8](#type-conversation_end)) and then `stream_end`. After this, further message requests will receive a 429 response.
 
 ### Rate Limit Headers
 
@@ -772,7 +860,7 @@ X-RateLimit-Reset: 1709042400
 ### Consent Flow
 
 1. **Session creation**: No consent required. The session is functional (legitimate interest).
-2. **First visitor message**: The LLM naturally includes a consent question in Justec's first response (driven by persona instructions).
+2. **First visitor message**: After the LLM responds, the backend automatically emits a `consent_request` structured message (see [Section 8](#type-consent_request)).
 3. **Consent decision**: Frontend sends the decision via the dedicated endpoint.
 
 ### `POST /api/session/:id/consent`
@@ -904,7 +992,7 @@ Returns the current session status. If the session is still active, the frontend
 | Field | Type | Description |
 |-------|------|-------------|
 | `session_id` | string | Session UUID |
-| `status` | string | `"active"` or `"closed"` |
+| `status` | string | `"active"` or `"queued"` (closed sessions return 410 before reaching this endpoint) |
 | `tier` | string | `"lobby"` or `"meeting_room"` |
 | `messages_count` | number | Total messages in conversation |
 | `last_message_role` | string \| null | Role of the last message (`"visitor"` or `"justec"`). `null` if no messages yet. |
@@ -947,7 +1035,10 @@ If the frontend needs to re-render the conversation after reconnection:
                 "display": { "de": "Dienstag, 4. März um 10:00 Uhr (Lissabon)" }
               }
             ],
-            "language": "de"
+            "language": "de",
+            "timezone": "Europe/Lisbon",
+            "duration_minutes": 60,
+            "instruction": "Wählen Sie eine passende Zeit aus."
           }
         }
       ]
@@ -978,8 +1069,8 @@ If the frontend needs to re-render the conversation after reconnection:
 
 | Source | Trigger | Signal |
 |--------|---------|--------|
-| **Security guard** | Guard level reaches 3 (terminate) or 4 (block) | SSE `session_terminated` event |
-| **Budget exhausted** | Token budget consumed | SSE `budget_exhausted` event, then 429 on next request |
+| **Security guard** | Guard level reaches 3 (terminate) or 4 (block) | SSE `session_terminated` + `conversation_end` events |
+| **Budget exhausted** | Token budget consumed | SSE `budget_exhausted` + `conversation_end` events, then 429 on next request |
 | **Session timeout** | 60 minutes of inactivity | Session expires server-side |
 | **Visitor leaves** | Tab close / navigate away | Frontend sends `POST /close` |
 
@@ -995,7 +1086,10 @@ event: token
 data: {"text": "I don't think I'm able to help you today. If you'd like to reach us, you can call our office. Take care."}
 
 event: session_terminated
-data: {"reason": "terminate", "guard_level": 3, "message": "I don't think I'm able to help you today. If you'd like to reach us, you can call our office. Take care."}
+data: {"reason": "security", "guard_level": 3, "message": "I don't think I'm able to help you today. If you'd like to reach us, you can call our office. Take care."}
+
+event: structured_message
+data: {"type": "conversation_end", "payload": {"reason": "security", "message": "...", "show_contact": true, "phone": "+351 XXX XXX XXX"}}
 
 event: stream_end
 data: {}
@@ -1003,15 +1097,16 @@ data: {}
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `reason` | string | `"terminate"` (level 3) or `"block"` (level 4) |
+| `reason` | string | Always `"security"` |
 | `guard_level` | number | The guard level that triggered termination (3 or 4) |
 | `message` | string | The canned termination message (localized to session language) |
 
 **Frontend behavior on `session_terminated`:**
 1. Display Justec's final message (already streamed via `token` events)
-2. Disable the input field
-3. Show a "Session ended" indicator
-4. Optionally show a "Start New Conversation" button (but NOT if `guard_level` is 4 — hard block means the IP is blocked)
+2. Render the `conversation_end` structured message (contact info)
+3. Disable the input field
+4. Show a "Session ended" indicator
+5. Optionally show a "Start New Conversation" button (but NOT if `guard_level` is 4 — hard block means the IP is blocked)
 
 **Canned termination messages by language:**
 - **en**: "I don't think I'm able to help you today. If you'd like to reach us, you can call our office. Take care."
@@ -1065,30 +1160,25 @@ Accepts both `application/json` and `text/plain` Content-Type (sendBeacon compat
 
 ### Payment Flow Overview
 
-1. LLM triggers `request_payment` tool → backend creates Stripe Checkout session + PayPal order
-2. Backend emits `payment_request` structured message with redirect URLs
-3. Frontend renders payment buttons → visitor clicks one → redirected to Stripe/PayPal
-4. Visitor completes payment on provider's page
+1. LLM triggers `request_payment` tool → backend creates Stripe PaymentIntent + PayPal order
+2. Backend emits `payment_request` structured message with provider credentials
+3. Frontend renders payment card → visitor initiates payment → completes via Stripe embedded checkout or PayPal redirect
+4. Visitor completes payment
 5. Provider sends webhook to backend → backend creates calendar event, updates Trello, sends Telegram notification
-6. Visitor is redirected back to chat page with `?payment=success&session_id=...`
-7. If SSE stream is still open, `booking_confirmed` structured message is emitted in-stream
+6. Visitor returns to chat page (PayPal redirect via `/api/paypal/return`, or Stripe redirect via configured success URL)
+7. Booking confirmation is pushed into session history for reconnection
 
-### Stripe Return Flow
+### Stripe Payment Flow
 
-After Stripe Checkout, the visitor is redirected to:
-```
-https://surfstyk.com/chat?payment=success&session_id={session_id}
-```
-or on cancellation:
-```
-https://surfstyk.com/chat?payment=cancelled&session_id={session_id}
-```
+The `payment_request` structured message includes Stripe's `client_secret` and `publishable_key`. The frontend can:
+- Use Stripe.js embedded checkout with the client secret
+- Or redirect to a Stripe-hosted checkout page
 
-The frontend checks URL parameters on load and displays the appropriate state.
+After payment, Stripe redirects to the configured success URL (e.g., `https://surfstyk.com/chat?payment=success&session_id={session_id}`). On cancellation, redirects to the cancel URL.
 
-### PayPal Return Flow
+### PayPal Payment Flow
 
-After PayPal approval, the visitor is redirected to:
+The `payment_request` structured message includes PayPal's `approve_url`. The frontend redirects the visitor to this URL. After approval, PayPal redirects to:
 
 ### `GET /api/paypal/return`
 
@@ -1100,8 +1190,8 @@ This endpoint captures the PayPal order and redirects the visitor back to the ch
 | `session_id` | Session ID (optional, for context) |
 
 **Redirects to:**
-- Success: `https://surfstyk.com/chat?payment=success&session_id={session_id}`
-- Failure: `https://surfstyk.com/chat?payment=cancelled&session_id={session_id}`
+- Success: `{configured_base_url}?payment=success&session_id={session_id}`
+- Failure: `{configured_base_url}?payment=cancelled&session_id={session_id}`
 
 ### `POST /api/webhooks/stripe`
 
@@ -1111,7 +1201,7 @@ Receives Stripe webhook events. Verified using Stripe's webhook signature.
 - `stripe-signature`: Stripe webhook signature
 
 **Handled events:**
-- `checkout.session.completed` — Payment successful. Triggers: calendar event creation, Trello card update, Telegram notification, in-chat `booking_confirmed`.
+- `checkout.session.completed` — Payment successful. Triggers: calendar event creation, Trello card update, Telegram notification, booking confirmation in session history.
 - `checkout.session.expired` — Payment abandoned. Updates payment status.
 
 **Response (200):**
@@ -1274,7 +1364,7 @@ Complete catalog of all Server-Sent Events emitted by the message endpoint.
 | `tier_change` | `{"from": "...", "to": "...", "score": N}` | Qualification tier changed | Log for analytics (no visible change in POC) |
 | `budget_warning` | `{"tokens_remaining": N, "budget_total": N, "message": "approaching_limit"}` | Approaching token budget limit | Optional: show subtle indicator |
 | `budget_exhausted` | `{"tokens_used": N, "budget_total": N}` | Token budget consumed | Prepare for conversation wrap-up |
-| `session_terminated` | `{"reason": "terminate"\|"block", "guard_level": N, "message": "..."}` | Session forcibly ended by security guard | Display message, disable input |
+| `session_terminated` | `{"reason": "security", "guard_level": N, "message": "..."}` | Session forcibly ended by security guard | Display message, disable input |
 | `error` | `{"code": "...", "message": "..."}` | Error during streaming | Show error, offer retry |
 | `stream_end` | `{}` | **Terminal event.** Stream is complete. | Stop reading. Close reader. Re-enable input. |
 
@@ -1282,28 +1372,33 @@ Complete catalog of all Server-Sent Events emitted by the message endpoint.
 
 | Type | When | Section |
 |------|------|---------|
-| `calendar_slots` | Justec offers booking times | [Section 8](#type-calendar_slots) |
-| `payment_request` | Justec requests booking deposit | [Section 8](#type-payment_request) |
-| `phone_request` | Justec asks for phone number | [Section 8](#type-phone_request) |
-| `booking_confirmed` | Booking completed (direct or post-payment) | [Section 8](#type-booking_confirmed) |
+| `calendar_slots` | Justec offers booking times (tool call) | [Section 8](#type-calendar_slots) |
+| `payment_request` | Justec requests booking deposit (tool call) | [Section 8](#type-payment_request) |
+| `phone_request` | Justec asks for phone number (tool call) | [Section 8](#type-phone_request) |
+| `booking_confirmed` | Booking completed — direct or post-payment (tool call / webhook) | [Section 8](#type-booking_confirmed) |
+| `consent_request` | After first assistant response if consent pending (automatic) | [Section 8](#type-consent_request) |
+| `conversation_end` | Session terminated by security or budget exhaustion (automatic) | [Section 8](#type-conversation_end) |
 
 ### Event Ordering (Typical Message)
 
 ```
-1. event: processing         (immediate — before LLM call)
-2. event: token              (repeated for each token)
+1. event: processing              (immediate — before LLM call)
+2. event: token                   (repeated for each token)
 3. event: token
 4. ...
-5. event: structured_message  (0 or more, emitted mid-stream when tools produce UI data)
-6. event: token              (LLM continues after tool calls)
+5. event: structured_message      (0 or more, mid-stream when tools produce UI data)
+6. event: token                   (LLM continues after tool calls)
 7. ...
 8. event: message_complete
-9. event: tier_change         (0 or 1, if score threshold crossed)
-10. event: budget_warning     (0 or 1, if approaching limit)
-11. event: stream_end         (ALWAYS last — frontend stops reading here)
+9. event: structured_message      (0 or 1, consent_request — only after first message)
+10. event: budget_exhausted        (0 or 1, if budget consumed)
+11. event: structured_message      (0 or 1, conversation_end — if budget exhausted)
+12. event: budget_warning          (0 or 1, if approaching limit — mutually exclusive with exhausted)
+13. event: tier_change             (0 or 1, if score threshold crossed)
+14. event: stream_end              (ALWAYS last — frontend stops reading here)
 ```
 
-> **Note:** `structured_message` events can appear mid-stream (between token events) because they are emitted when tool calls complete, before the LLM generates its follow-up text.
+> **Note:** Tool-triggered `structured_message` events (calendar_slots, phone_request, payment_request, booking_confirmed) appear mid-stream between token events. Metadata `structured_message` events (consent_request, conversation_end) appear after `message_complete`.
 
 **Guaranteed:** `stream_end` is ALWAYS emitted, even on errors or termination. The sequence is always: `processing` → [content] → `stream_end`. The frontend can rely on `stream_end` to know when to re-enable the input field and stop the reader.
 
@@ -1332,7 +1427,32 @@ event: token
 data: {"text": "I don't think I'm able to help you today..."}
 
 event: session_terminated
-data: {"reason": "terminate", "guard_level": 3, "message": "I don't think I'm able to help you today..."}
+data: {"reason": "security", "guard_level": 3, "message": "I don't think I'm able to help you today..."}
+
+event: structured_message
+data: {"type": "conversation_end", "payload": {"reason": "security", "message": "...", "show_contact": true, "phone": "+351 XXX XXX XXX"}}
+
+event: stream_end
+data: {}
+```
+
+### Budget Exhaustion Stream
+
+```
+event: processing
+data: {}
+
+event: token
+data: {"text": "..."}
+
+event: message_complete
+data: {"tokens_used": 350, "session_tokens_remaining": 0}
+
+event: budget_exhausted
+data: {"tokens_used": 30012, "budget_total": 30000}
+
+event: structured_message
+data: {"type": "conversation_end", "payload": {"reason": "budget_exhausted", "message": "...", "show_contact": true, "phone": "+351 XXX XXX XXX"}}
 
 event: stream_end
 data: {}
@@ -1429,6 +1549,12 @@ async function processSSEStream(response: Response) {
         case 'tier_change':
           logAnalytics('tier_change', event.data);
           break;
+        case 'budget_warning':
+          showBudgetWarning(event.data);
+          break;
+        case 'budget_exhausted':
+          handleBudgetExhausted(event.data);
+          break;
         case 'session_terminated':
           handleTermination(event.data);
           break;
@@ -1445,6 +1571,33 @@ async function processSSEStream(response: Response) {
 }
 ```
 
+### Structured Message Rendering
+
+```typescript
+function renderStructuredMessage(data: { type: string; payload: any }) {
+  switch (data.type) {
+    case 'calendar_slots':
+      renderCalendarSlots(data.payload);
+      break;
+    case 'payment_request':
+      renderPaymentCard(data.payload);
+      break;
+    case 'phone_request':
+      renderPhoneInput(data.payload);
+      break;
+    case 'booking_confirmed':
+      renderBookingConfirmation(data.payload);
+      break;
+    case 'consent_request':
+      renderConsentBanner(data.payload);
+      break;
+    case 'conversation_end':
+      renderConversationEnd(data.payload);
+      break;
+  }
+}
+```
+
 ### Action Helpers
 
 ```typescript
@@ -1456,11 +1609,6 @@ function selectSlot(slotId: string, display: string) {
 // Phone number submitted
 function submitPhone(phone: string) {
   sendAction(sessionId, 'phone_submitted', { phone }, collectBehavioral());
-}
-
-// Payment: redirect to provider
-function openPayment(url: string) {
-  window.location.href = url;
 }
 
 // GDPR consent (use dedicated endpoint)
