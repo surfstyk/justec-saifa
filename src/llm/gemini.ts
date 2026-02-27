@@ -110,7 +110,6 @@ export class GeminiAdapter implements LLMAdapter {
           systemInstruction: request.system,
           maxOutputTokens: request.max_tokens,
           temperature: request.temperature ?? 0.7,
-          thinkingConfig: { thinkingBudget: 4096 },
           ...(tools ? { tools } : {}),
         },
       });

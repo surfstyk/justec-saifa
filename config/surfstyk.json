@@ -26,12 +26,12 @@
     "lobby": {
       "provider": "google",
       "model": "gemini-3-flash-preview",
-      "max_tokens": 1024
+      "max_tokens": 4096
     },
     "meeting_room": {
       "provider": "google",
       "model": "gemini-3-flash-preview",
-      "max_tokens": 2048
+      "max_tokens": 8192
     }
   },
   "scoring": {
