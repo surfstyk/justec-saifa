@@ -351,22 +351,26 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
         ];
       }
 
-      // Inject continuation instruction so the model writes a contextual reply
-      // (mirrors the signal-only handling above — without this, Gemini often
-      //  produces zero text on the follow-up round after action tool calls)
-      const lastVisitorText = body.text || 'the visitor';
-      messages = [
-        ...messages,
-        {
-          role: 'tool' as const,
-          content: JSON.stringify({
-            instruction: `Tool execution complete. Now write a brief, natural reply to the visitor acknowledging the action and guiding next steps. Do NOT call any more tools. The visitor said: "${lastVisitorText.slice(0, 200)}"`,
-          }),
-          tool_call_id: 'system-continuation',
-          tool_name: 'system',
-          tool_result: { acknowledged: true },
-        },
-      ];
+      // Inject continuation instruction only if the model hasn't produced text yet
+      // (prevents doubled text when the model already wrote alongside the tool call)
+      if (!fullResponse.trim()) {
+        const lastVisitorText = body.text || 'the visitor';
+        messages = [
+          ...messages,
+          {
+            role: 'tool' as const,
+            content: JSON.stringify({
+              instruction: `Tool execution complete. Now write a brief, natural reply to the visitor acknowledging the action and guiding next steps. Do NOT call any more tools. The visitor said: "${lastVisitorText.slice(0, 200)}"`,
+            }),
+            tool_call_id: 'system-continuation',
+            tool_name: 'system',
+            tool_result: { acknowledged: true },
+          },
+        ];
+      } else {
+        // Model already produced text — no need for another round, break out
+        break;
+      }
 
       // Safety: last round with no more continuation
       if (round === MAX_TOOL_ROUNDS) {
