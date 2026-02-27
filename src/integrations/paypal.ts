@@ -57,6 +57,10 @@ async function getAccessToken(): Promise<string> {
   return _accessToken;
 }
 
+export function getPayPalClientId(): string {
+  return loadCredentials().client_id;
+}
+
 export interface PayPalOrderParams {
   session_id: string;
   slot_id: string;

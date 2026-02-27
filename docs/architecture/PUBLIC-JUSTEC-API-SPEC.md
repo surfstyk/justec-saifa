@@ -1,555 +1,210 @@
-# Justec SAIFA — API Specification
+# SAIFA Public API Spec
 
-**Project**: Justec Virtual Front Desk (powered by SAIFA)
-**Owner**: Backend Team
-**Version**: v0.3.0
-**Date**: 2026-02-27
-**Status**: Active — verified against codebase
-
-### Changelog
-
-| Version | Date | Changes |
-|---------|------|---------|
-| v0.1.0 | 2026-02-26 | Initial draft — all 9 integration points defined |
-| v0.2.0 | 2026-02-26 | Fix: explicit stream_end event, typed action field (replaces magic strings), POST /close (replaces DELETE), structured messages in history replay, processing event for typing indicator, language switch endpoint, session creation on page load, Stripe embedded checkout, 2s queue polling |
-| v0.3.0 | 2026-02-27 | Full audit against codebase: corrected payment flow (redirect URLs, not embedded), fixed structured message payloads (calendar_slots, phone_request, booking_confirmed), removed unimplemented types (link, conversation_end, consent_request), documented PayPal return endpoint, corrected session_terminated payload, fixed error codes, updated budget tiers to match config, corrected rate limit messages, added payment/booking fields to state endpoint |
+**Version**: 0.4.0
+**Base URL**: `https://{domain}/api`
 
 ---
 
-## Table of Contents
+## Authentication
 
-1. [Overview](#1-overview)
-2. [Base URL & Transport](#2-base-url--transport)
-3. [Authentication & Security](#3-authentication--security)
-4. [Session Initiation](#4-session-initiation)
-5. [Message Exchange](#5-message-exchange)
-6. [Tier Escalation Signals](#6-tier-escalation-signals)
-7. [Qualification State](#7-qualification-state)
-8. [Structured Message Types](#8-structured-message-types)
-9. [Budget & Rate Limit Signals](#9-budget--rate-limit-signals)
-10. [GDPR Consent](#10-gdpr-consent)
-11. [Language Switching](#11-language-switching)
-12. [Session Persistence](#12-session-persistence)
-13. [Conversation Termination](#13-conversation-termination)
-14. [Payment Flow & Webhooks](#14-payment-flow--webhooks)
-15. [Health & Status](#15-health--status)
-16. [Error Handling](#16-error-handling)
-17. [SSE Event Reference](#17-sse-event-reference)
+Sessions are created via `POST /api/session` with a Cloudflare Turnstile token. All subsequent requests use the `session_id` path parameter.
 
 ---
 
-## 1. Overview
-
-This document defines the API contract between the **Chat UI Frontend** and the **Justec SAIFA API** (middleware). The frontend team builds against this spec. The backend team implements and maintains it.
-
-### Design Principles
-
-- **REST + SSE**: Standard HTTP for commands, Server-Sent Events for streaming responses
-- **JSON everywhere**: Request and response bodies are JSON
-- **Stateful sessions**: Each conversation has a server-side session identified by a session ID
-- **Structured messages**: The backend returns typed message blocks (text, calendar_slots, payment_request, etc.) that the frontend renders as appropriate UI components
-- **In-band metadata**: Tier changes, budget warnings, and termination signals are delivered as SSE events within the message stream — no separate polling needed
-
-### Who Calls What
-
-| Direction | Transport | Use Case |
-|-----------|-----------|----------|
-| Frontend → Backend | HTTP POST/GET | Create sessions, send messages, update consent |
-| Backend → Frontend | SSE (within POST response) | Streamed response tokens, structured messages, metadata events |
-| Stripe/PayPal → Backend | HTTP POST (webhook) | Payment confirmations |
-
----
-
-## 2. Base URL & Transport
-
-```
-Base URL: https://surfstyk.com/api
-Transport: HTTPS only (TLS 1.2+)
-Content-Type: application/json (requests)
-Accept: text/event-stream (message endpoint), application/json (all others)
-```
-
-### CORS
-
-The API accepts requests from configured origins. In production:
-
-```
-Access-Control-Allow-Origin: https://surfstyk.com, https://www.surfstyk.com
-Access-Control-Allow-Methods: POST, GET, OPTIONS
-Access-Control-Allow-Headers: Content-Type, X-Session-ID, X-Turnstile-Token
-```
-
-In dev mode (`dev_mode: true`), CORS is open to all origins.
-
----
-
-## 3. Authentication & Security
-
-### No User Authentication
-
-The API serves anonymous visitors. There are no API keys, bearer tokens, or user accounts on the frontend side. Security is enforced through:
-
-1. **Origin check**: Requests must originate from configured CORS origins
-2. **Turnstile token**: First request (session creation) must include a valid Cloudflare Turnstile token (skipped in dev mode)
-3. **Session ID**: All subsequent requests include the session ID returned at creation
-4. **Rate limiting**: Per-IP and per-session limits enforced server-side
-
-### Request Headers
-
-| Header | Required | Description |
-|--------|----------|-------------|
-| `Content-Type` | Yes | `application/json` |
-| `X-Session-ID` | After session creation | Session identifier (also accepted via URL parameter) |
-| `X-Turnstile-Token` | On session creation | Cloudflare Turnstile verification token (alternative to body field) |
-
----
-
-## 4. Session Initiation
-
-Creates a new conversation session. **Called on page load** — the frontend creates the session immediately when the page renders, before the visitor types anything. This ensures the greeting is displayed instantly and the Turnstile verification happens upfront (not blocking the first message).
+## Endpoints
 
 ### `POST /api/session`
 
-#### Request
+Create a new chat session.
 
+**Request body**:
 ```json
 {
-  "language": "de",
-  "referrer": "https://google.com/search?q=ai+agent+consulting",
-  "turnstile_token": "0.AXgB...",
-  "metadata": {
-    "utm_source": "google",
-    "utm_medium": "cpc",
-    "utm_campaign": "ai-agents-de"
-  }
+  "turnstile_token": "string",
+  "language": "en" | "de" | "pt",
+  "referrer": "string (optional)",
+  "user_agent": "string (optional)"
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `language` | string | No | Language code (`en`, `de`, `pt`). Defaults to `en` if missing or invalid. Frontend determines this from `Accept-Language`, `navigator.languages`, or geo-IP headers. |
-| `referrer` | string | No | The HTTP referrer URL. For analytics and scoring. |
-| `turnstile_token` | string | Production only | Cloudflare Turnstile verification token. Also accepted via `X-Turnstile-Token` header. Skipped in dev mode. |
-| `metadata` | object | No | Arbitrary metadata (UTM parameters, landing page variant, etc.). Stored but not processed by the backend. |
-
-#### Response — Success (200)
-
+**Response** (`200`):
 ```json
 {
-  "session_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "status": "active",
-  "greeting": {
-    "language": "de",
-    "text": "Guten Tag und willkommen bei Surfstyk Limited. Ich bin Justec, Hendriks persönliche Assistentin. Wie kann ich Ihnen heute behilflich sein?"
-  },
-  "config": {
-    "max_message_length": 2000,
-    "languages": ["en", "de", "pt"]
-  }
+  "session_id": "string",
+  "greeting": "string",
+  "tier": "lobby",
+  "language": "en"
 }
 ```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `session_id` | string (UUID) | Unique session identifier. Frontend must include this in all subsequent requests. |
-| `status` | string | `"active"` or `"queued"` (see below). |
-| `greeting` | object | Pre-rendered greeting in the detected language. **No LLM call is made.** The frontend renders this as Justec's first message. |
-| `greeting.language` | string | The language the backend chose for the greeting. |
-| `greeting.text` | string | The greeting text. |
-| `config` | object | Session configuration the frontend may need. |
-| `config.max_message_length` | number | Maximum characters per message (2000). Frontend should enforce this. |
-| `config.languages` | string[] | Supported languages for the language switcher. |
-
-#### Response — Queued (202)
-
-When the maximum concurrent sessions limit is reached:
-
-```json
-{
-  "session_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "status": "queued",
-  "queue": {
-    "position": 3,
-    "estimated_wait_seconds": 45
-  },
-  "config": {
-    "max_message_length": 2000,
-    "languages": ["en", "de", "pt"]
-  }
-}
-```
-
-The frontend displays a queue message. The frontend polls `GET /api/session/:id/status` every **2 seconds** until `status` becomes `"active"`, then renders the greeting and enables input.
-
-#### Response — Bot Detected (403)
-
-If the Turnstile token is invalid or missing (production only):
-
-```json
-{
-  "error": "verification_failed",
-  "message": "We couldn't verify your request. Please refresh and try again."
-}
-```
-
-#### Response — IP Blocked (403)
-
-```json
-{
-  "error": "blocked",
-  "message": "Access denied."
-}
-```
-
----
-
-## 5. Message Exchange
-
-The core interaction: visitor sends a message, Justec responds via streaming.
 
 ### `POST /api/session/:id/message`
 
-#### Request
+Send a message or action. Response is a **Server-Sent Events** stream.
 
-**Text message** (visitor typing):
-
+**Request body**:
 ```json
 {
-  "text": "Ich leite ein Logistikunternehmen mit ca. 200 Mitarbeitern und wir haben massive Probleme mit manuellen Prozessen.",
+  "text": "string (mutually exclusive with action)",
+  "action": {
+    "type": "slot_selected" | "phone_submitted" | "payment_provider_selected" | "consent_response" | "language_changed",
+    "payload": { ... }
+  },
   "behavioral": {
-    "typing_duration_ms": 12400,
-    "keypress_count": 97,
-    "correction_count": 3,
-    "time_since_last_message_ms": 15200,
-    "mouse_movement_detected": true,
-    "viewport_scroll_depth": 0.0
+    "typing_duration_ms": 0,
+    "keypress_count": 0,
+    "correction_count": 0,
+    "time_since_last_message_ms": 0,
+    "mouse_movement_detected": false,
+    "viewport_scroll_depth": 0
   }
 }
 ```
 
-**Structured action** (visitor clicked a UI element):
-
-```json
-{
-  "action": {
-    "type": "slot_selected",
-    "payload": { "slot_id": "slot-2", "display": "Thursday, March 6 at 2:00 PM" }
-  },
-  "behavioral": { ... }
-}
-```
-
-A message contains EITHER `text` (visitor typed something) OR `action` (visitor clicked a UI element). Never both.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `text` | string | One of `text` or `action` required | The visitor's typed message. Max length: 2000 characters. |
-| `action` | object | One of `text` or `action` required | A structured action triggered by the visitor clicking a UI component. |
-| `action.type` | string | If `action` present | Action type. See **Action Types** below. |
-| `action.payload` | object | If `action` present | Action-specific data. |
-| `behavioral` | object | No | Behavioral signals collected by the frontend. Used for scoring and bot detection. If omitted, behavioral scoring uses defaults. |
-
-**Action Types:**
-
-| Type | Payload | Triggered By |
-|------|---------|-------------|
-| `slot_selected` | `{ "slot_id": "slot-2", "display": "Thursday, March 6 at 2:00 PM" }` | Visitor clicks a calendar slot from `calendar_slots` structured message |
-| `phone_submitted` | `{ "phone": "+491701234567" }` | Visitor submits phone number from `phone_request` structured message |
-| `payment_provider_selected` | `{ "provider": "stripe" }` or `{ "provider": "paypal" }` | Visitor clicks a payment button from `payment_request` structured message |
-
-> **Note:** `consent_response` and `language_changed` actions should use their dedicated endpoints (`POST /api/session/:id/consent` and `POST /api/session/:id/language`). Sending them as message actions will not trigger an LLM response.
-
-**Behavioral signals reference:**
-
-| Signal | Type | Description |
-|--------|------|-------------|
-| `typing_duration_ms` | number | Time from first keypress to send |
-| `keypress_count` | number | Total keypresses (including corrections) |
-| `correction_count` | number | Backspace/delete count |
-| `time_since_last_message_ms` | number | Time since the previous visitor message was sent |
-| `mouse_movement_detected` | boolean | Whether mouse/touch events were detected since last message |
-| `viewport_scroll_depth` | number | 0.0 = top, 1.0 = bottom of page |
-
-#### Response — SSE Stream
-
-The response is a **Server-Sent Events** stream. The `Content-Type` header is `text/event-stream`.
-
-```
-HTTP/1.1 200 OK
-Content-Type: text/event-stream
-Cache-Control: no-cache
-Connection: keep-alive
-X-Session-Tier: lobby
-X-RateLimit-Remaining: 11
-X-RateLimit-Limit: 15
-X-RateLimit-Reset: 1709042400
-
-event: processing
-data: {}
-
-event: token
-data: {"text": "Das"}
-
-event: token
-data: {"text": " ist"}
-
-event: token
-data: {"text": " ein"}
-
-event: token
-data: {"text": " Bereich"}
-
-...
-
-event: token
-data: {"text": "."}
-
-event: message_complete
-data: {"tokens_used": 847, "session_tokens_remaining": 4153}
-
-event: stream_end
-data: {}
-
-```
-
-**Stream lifecycle:**
-
-1. **`processing`** — Sent immediately when the backend begins handling the request (before any LLM call). The frontend shows the typing indicator (three pulsing dots) on this event. This eliminates dead air between the POST and first token.
-2. **`token`** — Streamed response tokens. Frontend hides the typing indicator on the first `token` event and begins rendering text.
-3. **`message_complete`** — End of Justec's text response. May be followed by metadata events.
-4. **Metadata events** — `structured_message`, `tier_change`, `budget_warning`, etc. Zero or more.
-5. **`stream_end`** — **Terminal event.** The stream is complete. The frontend MUST stop reading on this event. The HTTP response body closes immediately after. Always the last event in every stream — including error streams and termination streams.
-
-Each SSE event has an `event` type and a JSON `data` payload. See [Section 17: SSE Event Reference](#17-sse-event-reference) for the complete event catalog.
-
-**Response Headers:**
-
-| Header | Description |
-|--------|-------------|
-| `Content-Type` | `text/event-stream` |
-| `Cache-Control` | `no-cache` |
-| `Connection` | `keep-alive` |
-| `X-Session-Tier` | Current tier: `lobby` or `meeting_room` |
-| `X-RateLimit-Remaining` | Messages remaining in current window |
-| `X-RateLimit-Limit` | Per-session message limit |
-| `X-RateLimit-Reset` | Unix timestamp (seconds) when limit resets |
-
-#### Response — Session Not Found (404)
-
-```json
-{
-  "error": "session_not_found",
-  "message": "Session not found or expired"
-}
-```
-
-#### Response — Session Closed (410)
-
-If the session has been terminated (security guard, timeout, budget exhausted):
-
-```json
-{
-  "error": "session_closed",
-  "message": "This conversation has been ended."
-}
-```
-
-#### Response — Rate Limited (429)
-
-Per-session limit:
-```json
-{
-  "error": "rate_limited",
-  "message": "Too many messages. Please wait before sending another.",
-  "retry_after_seconds": 5
-}
-```
-
-Per-IP limit:
-```json
-{
-  "error": "rate_limited",
-  "message": "Too many requests from your network. Please try again later.",
-  "retry_after_seconds": 30
-}
-```
-
-Token budget exhausted (pre-stream check):
-```json
-{
-  "error": "rate_limited",
-  "message": "Token budget exhausted",
-  "retry_after_seconds": 0
-}
-```
-
-#### Response — IP Blocked (403)
-
-```json
-{
-  "error": "blocked",
-  "message": "Access denied."
-}
-```
-
-#### Response — Invalid Request (400)
-
-```json
-{
-  "error": "invalid_request",
-  "message": "Message must include text or action"
-}
-```
-
-or
-
-```json
-{
-  "error": "invalid_request",
-  "message": "Message cannot include both text and action"
-}
-```
-
----
-
-## 6. Tier Escalation Signals
-
-When the qualification score crosses the threshold (default: 70), the session tier changes from `lobby` to `meeting_room`. This is signaled **in-band** via the SSE stream.
-
-### SSE Event: `tier_change`
-
-```
-event: tier_change
-data: {"from": "lobby", "to": "meeting_room", "score": 72}
-```
-
-This event is emitted **once**, at the end of the message that triggered the escalation (after `message_complete`, before `stream_end`).
-
-### Frontend Behavior
-
-For the **seamless transition** (POC), the frontend does nothing visible when it receives `tier_change`. It may:
-- Log the event for analytics
-- Update internal state
-- Show a subtle visual cue (optional, e.g., a barely perceptible border color shift)
-
-For a **theatrical transition** (future), the frontend could:
-- Animate a UI transition
-- Display "Let me take you to a more comfortable setting..."
-- Shift background color, typography weight, or other ambient cues
-
-### Response Header
-
-Every SSE response includes a `X-Session-Tier` header indicating the current tier at the time the stream starts:
-
-```
-X-Session-Tier: lobby
-```
-or
-```
-X-Session-Tier: meeting_room
-```
-
----
-
-## 7. Qualification State
-
 ### `GET /api/session/:id/state`
 
-Returns the full session state. Useful for the frontend to check status after reconnection or for debug purposes.
+Get current session state (tier, score, budget remaining).
 
-#### Response (200)
+### `GET /api/session/:id/history`
 
+Get conversation history for session reconnection.
+
+### `POST /api/session/:id/consent`
+
+Submit consent response.
+
+**Request body**:
 ```json
 {
-  "session_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "status": "active",
-  "tier": "meeting_room",
-  "language": "de",
-  "consent": true,
-  "score": {
-    "composite": 72,
-    "behavioral": 25,
-    "explicit": 32,
-    "fit": 15,
-    "classification": "qualified"
-  },
-  "visitor": {
-    "name": "Marcus",
-    "company": "LogiTech GmbH",
-    "role": "Head of Operations"
-  },
-  "budget": {
-    "tokens_used": 4200,
-    "tokens_remaining": 20800,
-    "messages_sent": 4,
-    "messages_limit": 15
-  },
-  "payment": {
-    "status": "completed",
-    "provider": "stripe"
-  },
-  "booking_time": "2026-03-06T14:00:00+00:00",
-  "guard_level": 0,
-  "created_at": "2026-02-26T14:32:00Z"
+  "consent": "granted" | "declined"
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `session_id` | string | Session UUID |
-| `status` | string | `"active"` or `"closed"` |
-| `tier` | string | `"lobby"` or `"meeting_room"` |
-| `language` | string | Current session language (`en`, `de`, `pt`) |
-| `consent` | boolean | Whether GDPR consent has been granted |
-| `score` | object | Current qualification scores |
-| `score.composite` | number | Overall composite score (0–100) |
-| `score.behavioral` | number | Behavioral sub-score |
-| `score.explicit` | number | Explicit qualification sub-score |
-| `score.fit` | number | Fit sub-score |
-| `score.classification` | string | `"hot"`, `"warm"`, `"cold"`, or `"disqualified"` |
-| `visitor` | object | Extracted visitor information |
-| `visitor.name` | string \| null | Visitor's name (if mentioned) |
-| `visitor.company` | string \| null | Visitor's company (if mentioned) |
-| `visitor.role` | string \| null | Visitor's role (if mentioned) |
-| `budget` | object | Token and message budget status |
-| `budget.tokens_used` | number | Tokens consumed so far |
-| `budget.tokens_remaining` | number | Tokens remaining before budget exhaustion |
-| `budget.messages_sent` | number | Messages sent in this session |
-| `budget.messages_limit` | number | Per-session message limit |
-| `payment` | object | Payment status |
-| `payment.status` | string \| null | `"pending"`, `"completed"`, `"expired"`, or `null` |
-| `payment.provider` | string \| null | `"stripe"`, `"paypal"`, or `null` |
-| `booking_time` | string \| null | ISO 8601 timestamp of booked appointment, or `null` |
-| `guard_level` | number | Security guard escalation level (0–4) |
-| `created_at` | string | ISO 8601 timestamp of session creation |
+### `POST /api/session/:id/language`
 
-### Score Classification Values
+Change session language.
 
-| Classification | Score Range | Meaning |
-|----------------|------------|---------|
-| `"hot"` | 70–100 | Qualified lead. In Meeting Room. |
-| `"warm"` | 45–69 | Engaging but not yet qualified. |
-| `"cold"` | 25–44 | Low engagement. Graceful exit territory. |
-| `"disqualified"` | 0–24 | Not a fit. |
+**Request body**:
+```json
+{
+  "language": "en" | "de" | "pt"
+}
+```
+
+### `POST /api/session/:id/close`
+
+Close session (uses POST for `sendBeacon` compatibility).
+
+### `GET /api/health`
+
+Health check.
 
 ---
 
-## 8. Structured Message Types
+## SSE Event Lifecycle
 
-The LLM can trigger tool calls that result in **structured message blocks** within the SSE stream. These are not plain text — they carry typed data that the frontend renders as rich UI components.
-
-### SSE Event: `structured_message`
+Every `POST /api/session/:id/message` response follows this lifecycle:
 
 ```
-event: structured_message
-data: {"type": "calendar_slots", "payload": { ... }}
+processing → [token]* → message_complete → [structured_message]* → [budget_warning | budget_exhausted] → stream_end
 ```
 
-The frontend checks the `type` field and renders the appropriate component.
+Guard termination short-circuits:
+```
+processing → [token]? → session_terminated → [conversation_end] → stream_end
+```
 
-### Type: `calendar_slots`
+### SSE Event Types
 
-Presented when Justec offers booking times. **Slot scarcity**: only 1 slot is revealed per check, up to 3 total per session.
+#### `processing`
+```json
+{}
+```
+
+#### `token`
+```json
+{ "text": "string" }
+```
+
+#### `message_complete`
+```json
+{
+  "tokens_used": 150,
+  "session_tokens_remaining": 29850
+}
+```
+
+#### `structured_message`
+```json
+{
+  "type": "calendar_slots | phone_request | payment_request | booking_confirmed | consent_request | conversation_end",
+  "payload": { ... }
+}
+```
+
+#### `tier_change`
+```json
+{
+  "from": "lobby",
+  "to": "meeting_room",
+  "score": 72
+}
+```
+
+#### `budget_warning`
+```json
+{
+  "tokens_remaining": 3000,
+  "budget_total": 30000,
+  "message": "approaching_limit"
+}
+```
+
+#### `budget_exhausted`
+```json
+{
+  "tokens_used": 30000,
+  "budget_total": 30000
+}
+```
+
+#### `session_terminated`
+```json
+{
+  "reason": "security",
+  "guard_level": 3,
+  "message": "string"
+}
+```
+
+`reason` is always `"security"` (the internal guard action name is not exposed).
+
+#### `consent_state`
+```json
+{
+  "consent": "granted" | "declined"
+}
+```
+
+#### `error`
+```json
+{
+  "code": "llm_error | internal_error | rate_limited",
+  "message": "string"
+}
+```
+
+#### `stream_end`
+```json
+{}
+```
+
+---
+
+## Structured Message Types
+
+### `calendar_slots`
+
+Emitted when the LLM calls `check_availability`. Displays available time slots.
 
 ```json
 {
@@ -557,46 +212,43 @@ Presented when Justec offers booking times. **Slot scarcity**: only 1 slot is re
   "payload": {
     "slots": [
       {
-        "id": "slot-1",
-        "start": "2026-03-04T10:00:00+00:00",
-        "end": "2026-03-04T11:00:00+00:00",
-        "display": {
-          "en": "Tuesday, March 4 at 10:00 AM (Lisbon)",
-          "de": "Dienstag, 4. März um 10:00 Uhr (Lissabon)",
-          "pt": "Terça-feira, 4 de março às 10:00 (Lisboa)"
-        }
+        "id": "slot_2026-03-03T10:00:00",
+        "start": "2026-03-03T10:00:00+00:00",
+        "end": "2026-03-03T11:00:00+00:00",
+        "display": { "en": "Monday, March 3 at 10:00 AM", "de": "...", "pt": "..." }
       }
     ],
-    "language": "en"
+    "language": "en",
+    "timezone": "Europe/Lisbon",
+    "duration_minutes": 60,
+    "instruction": "Select a time that works for you."
   }
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `slots` | array | Array of available time slots (typically 1 per call) |
-| `slots[].id` | string | Unique slot identifier. Pass this back in `slot_selected` action. |
-| `slots[].start` | string | ISO 8601 start time |
-| `slots[].end` | string | ISO 8601 end time |
-| `slots[].display` | object | Localized display strings keyed by language code |
-| `language` | string | Current session language |
+**Frontend**: Render slot buttons. On click, send `action: { type: "slot_selected", payload: { slot_id, display } }`.
 
-**Frontend renders:** Clickable time slot cards/buttons. Use `slots[].display[language]` for the visible text. When the visitor selects a slot, send a structured action:
+### `phone_request`
+
+Emitted when the LLM calls `request_phone`. Displays a phone number input.
 
 ```json
 {
-  "action": {
-    "type": "slot_selected",
-    "payload": { "slot_id": "slot-1", "display": "Tuesday, March 4 at 10:00 AM (Lisbon)" }
+  "type": "phone_request",
+  "payload": {
+    "language": "en",
+    "prompt": "Please enter your phone number so we can reach you.",
+    "preferred_messenger": "WhatsApp",
+    "placeholder": "+1 555 000 0000"
   }
 }
 ```
 
-> **Tip:** Include the `display` field so the LLM can reference the slot naturally in its response.
+**Frontend**: Render phone input with placeholder. On submit, send `action: { type: "phone_submitted", payload: { phone } }`.
 
-### Type: `payment_request`
+### `payment_request`
 
-Presented when Justec requests the booking deposit. The backend creates checkout sessions with both providers and returns redirect URLs.
+Emitted when the LLM calls `request_payment`. Displays payment options.
 
 ```json
 {
@@ -604,918 +256,129 @@ Presented when Justec requests the booking deposit. The backend creates checkout
   "payload": {
     "amount": 5000,
     "currency": "eur",
-    "display_amount": "€50.00",
-    "description": "Strategy session deposit — credited toward your first engagement",
-    "stripe_checkout_url": "https://checkout.stripe.com/c/pay/cs_live_...",
-    "paypal_approve_url": "https://www.paypal.com/checkoutnow?token=ORDER-ABC123",
+    "display_amount": "\u20ac50.00",
+    "description": "60-minute strategy session — credited toward your first engagement",
+    "providers": {
+      "stripe": {
+        "client_secret": "cs_xxx_secret_xxx",
+        "publishable_key": "pk_live_xxx"
+      },
+      "paypal": {
+        "approve_url": "https://www.sandbox.paypal.com/checkoutnow?token=xxx",
+        "order_id": "ORDER-xxx",
+        "client_id": "xxx"
+      }
+    },
     "booking_summary": {
-      "date": "Thursday, March 6 at 2:00 PM (Lisbon)",
-      "duration": "60 minutes",
+      "date": "Monday, March 3 at 10:00 AM",
+      "duration": "60-minute",
       "with": "Hendrik Bondzio"
     }
   }
 }
 ```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `amount` | number | Deposit amount in minor units (cents). 5000 = €50.00. |
-| `currency` | string | ISO currency code (`eur`) |
-| `display_amount` | string | Formatted amount for display (e.g., `"€50.00"`) |
-| `description` | string | Payment description |
-| `stripe_checkout_url` | string \| null | Stripe Checkout redirect URL. `null` if Stripe unavailable. |
-| `paypal_approve_url` | string \| null | PayPal approval redirect URL. `null` if PayPal unavailable. |
-| `booking_summary` | object | Summary of the appointment being booked |
-| `booking_summary.date` | string | Display date of the booking |
-| `booking_summary.duration` | string | Duration display (e.g., `"60 minutes"`) |
-| `booking_summary.with` | string | Name of the person the meeting is with |
+**Frontend — Stripe**: Use `client_secret` + `publishable_key` to mount Stripe Embedded Checkout inline. The visitor stays in the chat UI.
 
-**Frontend renders:** A styled payment card with booking summary and two payment buttons:
-- **"Pay with Card"** → Opens `stripe_checkout_url` (redirect to Stripe Checkout)
-- **"Pay with PayPal"** → Opens `paypal_approve_url` (redirect to PayPal)
+**Frontend — PayPal**: Either redirect to `approve_url` or use `client_id` + `order_id` with the PayPal JS SDK for inline checkout.
 
-Both redirect the visitor away from the page. After payment, they are redirected back (see [Section 14: Payment Flow](#14-payment-flow--webhooks)).
+Provider keys are only present if that provider's session was created successfully.
 
-### Type: `phone_request`
+### `booking_confirmed`
 
-When Justec asks for a mobile number (typically at booking time).
-
-```json
-{
-  "type": "phone_request",
-  "payload": {
-    "language": "en"
-  }
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `language` | string | Current session language. Use this to localize the phone input UI. |
-
-**Frontend renders:** A phone input field with country code prefix detection and a submit button. The prompt text and preferred messenger information come from the LLM's text response (streamed via `token` events in the same message). When submitted:
-
-```json
-{
-  "action": {
-    "type": "phone_submitted",
-    "payload": { "phone": "+491701234567" }
-  }
-}
-```
-
-### Type: `booking_confirmed`
-
-Sent when a booking is successfully completed — either directly via calendar tool or after payment webhook fires.
-
-**From calendar tool (direct booking):**
+Emitted after a successful booking (via direct booking or post-payment webhook).
 
 ```json
 {
   "type": "booking_confirmed",
   "payload": {
-    "event_id": "abc123",
+    "event_id": "string",
     "slot": {
-      "id": "slot-1",
-      "start": "2026-03-04T10:00:00+00:00",
-      "end": "2026-03-04T11:00:00+00:00",
-      "display": {
-        "en": "Tuesday, March 4 at 10:00 AM (Lisbon)",
-        "de": "Dienstag, 4. März um 10:00 Uhr (Lissabon)",
-        "pt": "Terça-feira, 4 de março às 10:00 (Lisboa)"
-      }
+      "id": "slot_xxx",
+      "start": "2026-03-03T10:00:00+00:00",
+      "end": "2026-03-03T11:00:00+00:00",
+      "display": { "en": "...", "de": "...", "pt": "..." }
     },
-    "visitor_name": "Marcus"
+    "visitor_name": "string"
   }
 }
 ```
 
-**From payment webhook (after successful payment):**
+### `consent_request`
+
+Emitted after the first assistant response when consent is `pending`.
 
 ```json
 {
-  "type": "booking_confirmed",
+  "type": "consent_request",
   "payload": {
-    "date": "Thursday, March 6 at 2:00 PM (Lisbon)",
-    "slot_start": "2026-03-06T14:00:00+00:00",
-    "slot_end": "2026-03-06T15:00:00+00:00",
-    "duration": "60 minutes",
-    "with": "Hendrik Bondzio",
-    "payment_provider": "stripe",
-    "deposit_amount": 5000,
-    "currency": "eur",
-    "display_amount": "€50.00",
-    "deposit_credited": "Deposit will be credited toward your first engagement"
+    "text": "We store this conversation to improve our service. Your data is processed in accordance with our privacy policy.",
+    "privacy_url": "https://surfstyk.com/privacy",
+    "options": {
+      "accept": "I agree",
+      "decline": "No thanks"
+    }
   }
 }
 ```
 
-**Frontend renders:** A confirmation card with a checkmark, booking details, and payment summary (if from payment flow).
+**Frontend**: Render consent banner/modal. On response, send `action: { type: "consent_response", payload: { consent: "granted" | "declined" } }` or call `POST /api/session/:id/consent`.
+
+### `conversation_end`
+
+Emitted when the conversation is permanently ended (budget exhaustion or security termination).
+
+```json
+{
+  "type": "conversation_end",
+  "payload": {
+    "reason": "budget_exhausted" | "security",
+    "message": "This conversation has reached its limit. Please contact us directly for further assistance.",
+    "show_contact": true,
+    "phone": "+351 XXX XXX XXX"
+  }
+}
+```
+
+**Frontend**: Disable the input. Display the `message`. If `show_contact` is true, show the `phone` number as a contact option.
 
 ---
 
-## 9. Budget & Rate Limit Signals
+## Token Budget Tiers
 
-### Token Budget Tiers
+| Classification | Budget (tokens) |
+|----------------|----------------|
+| Anonymous | 30,000 |
+| Engaged | 60,000 |
+| Qualified | 150,000 |
+| Post-booking | 300,000 |
 
-The token budget increases as the session progresses:
-
-| Tier | Budget (tokens) | Trigger |
-|------|----------------|---------|
-| `anonymous` | 30,000 | Session created, no messages yet |
-| `engaged` | 60,000 | After 2+ messages sent |
-| `qualified` | 150,000 | Tier escalated to meeting_room |
-| `post_booking` | 300,000 | After payment completed |
-
-### In-Stream Budget Warning
-
-When the session drops below 15% of its token budget remaining, a warning is sent via SSE:
-
-```
-event: budget_warning
-data: {"tokens_remaining": 4500, "budget_total": 30000, "message": "approaching_limit"}
-```
-
-The frontend may show a subtle indicator. This is primarily for the frontend to prepare graceful degradation — Justec's next response will naturally wrap up the conversation.
-
-### Budget Exhausted
-
-When the budget is fully consumed:
-
-```
-event: budget_exhausted
-data: {"tokens_used": 30012, "budget_total": 30000}
-```
-
-After this event, further message requests will receive a 429 response.
-
-### Rate Limit Headers
-
-Every message response includes rate limit headers:
-
-```
-X-RateLimit-Remaining: 11
-X-RateLimit-Limit: 15
-X-RateLimit-Reset: 1709042400
-```
-
-| Header | Description |
-|--------|-------------|
-| `X-RateLimit-Remaining` | Messages remaining in current window |
-| `X-RateLimit-Limit` | Per-session message limit (default: 15) |
-| `X-RateLimit-Reset` | Unix timestamp (seconds) when the limit resets |
+Budget tier is determined by qualification scoring. The visitor is never told their tier or score.
 
 ---
 
-## 10. GDPR Consent
+## Action Types
 
-### Consent Flow
-
-1. **Session creation**: No consent required. The session is functional (legitimate interest).
-2. **First visitor message**: The LLM naturally includes a consent question in Justec's first response (driven by persona instructions).
-3. **Consent decision**: Frontend sends the decision via the dedicated endpoint.
-
-### `POST /api/session/:id/consent`
-
-#### Request
-
-```json
-{
-  "consent": true
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `consent` | boolean | Yes | `true` = consented, `false` = declined |
-
-#### Response (200)
-
-```json
-{
-  "status": "ok",
-  "consent": true,
-  "mode": "full"
-}
-```
-
-| `mode` Value | Meaning |
-|-------------|---------|
-| `"full"` | Consent granted. Full features: conversation logging, behavioral fingerprint. |
-| `"stateless"` | Consent declined. No persistence. Conversation not logged. Session data deleted on close. |
-
-#### Error Responses
-
-```json
-{
-  "error": "invalid_request",
-  "message": "consent must be a boolean"
-}
-```
-
-### Backend Behavior by Consent State
-
-| Feature | Consented | Declined |
-|---------|-----------|---------|
-| Conversation logged to SQLite | Yes | No |
-| Trello card created (if qualified) | Yes | No |
-| Qualification scoring | Yes | Yes |
-| Booking still possible | Yes | Yes |
+| Action | Payload | Trigger |
+|--------|---------|---------|
+| `slot_selected` | `{ slot_id: string, display?: string }` | Visitor clicks a calendar slot |
+| `phone_submitted` | `{ phone: string }` | Visitor submits phone number |
+| `payment_provider_selected` | `{ provider: "stripe" \| "paypal" }` | Visitor selects payment method |
+| `consent_response` | `{ consent: "granted" \| "declined" }` | Visitor responds to consent banner |
+| `language_changed` | `{ language: "en" \| "de" \| "pt" }` | Visitor changes language |
 
 ---
 
-## 11. Language Switching
-
-The frontend detects the visitor's language at session creation. From that point, language can change in two ways:
-
-### Implicit: Visitor Types in a Different Language
-
-The LLM detects the language switch and responds naturally. The backend updates the session language via the `report_signals` tool. No API call needed.
-
-### Explicit: Visitor Uses the Language Switcher
-
-Use the dedicated endpoint (recommended) to switch without triggering an LLM response:
-
-### `POST /api/session/:id/language`
-
-#### Request
-
-```json
-{
-  "language": "de"
-}
-```
-
-#### Response (200)
-
-```json
-{
-  "status": "ok",
-  "language": "de",
-  "greeting": "Guten Tag und willkommen bei Surfstyk Limited. Ich bin Justec, Hendriks persönliche Assistentin. Wie kann ich Ihnen heute behilflich sein?"
-}
-```
-
-This updates the session language and returns the greeting in the new language (for the frontend to optionally re-render the initial greeting). Does NOT trigger an LLM call or create a message in the conversation history.
-
-#### Error Responses
-
-```json
-{
-  "error": "invalid_request",
-  "message": "language must be one of: en, de, pt"
-}
-```
-
-**Valid language codes:** `en`, `de`, `pt`
-
----
-
-## 12. Session Persistence
-
-### POC Approach (No Returning Visitors)
-
-For the POC, sessions are not persisted across browser sessions:
-- Session ID is stored in `sessionStorage` (cleared when tab closes)
-- If the visitor refreshes the page, a new session is created
-- The greeting is re-rendered (no "welcome back")
-
-### Session Reconnection (Same Tab)
-
-If the SSE connection drops mid-conversation (network hiccup), the frontend can reconnect:
-
-### `GET /api/session/:id/status`
-
-Returns the current session status. If the session is still active, the frontend can resume by sending the next message normally. Conversation history is server-side.
-
-#### Response (200)
-
-```json
-{
-  "session_id": "a1b2c3d4-...",
-  "status": "active",
-  "tier": "lobby",
-  "messages_count": 4,
-  "last_message_role": "justec",
-  "consent": true
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `session_id` | string | Session UUID |
-| `status` | string | `"active"` or `"closed"` |
-| `tier` | string | `"lobby"` or `"meeting_room"` |
-| `messages_count` | number | Total messages in conversation |
-| `last_message_role` | string \| null | Role of the last message (`"visitor"` or `"justec"`). `null` if no messages yet. |
-| `consent` | boolean | Whether consent has been granted |
-
-### `GET /api/session/:id/history`
-
-If the frontend needs to re-render the conversation after reconnection:
-
-#### Response (200)
-
-```json
-{
-  "messages": [
-    {
-      "role": "justec",
-      "content": "Guten Tag und willkommen bei Surfstyk Limited...",
-      "timestamp": "2026-02-26T14:32:00Z",
-      "structured": []
-    },
-    {
-      "role": "visitor",
-      "content": "Ich leite ein Logistikunternehmen mit ca. 200 Mitarbeitern...",
-      "timestamp": "2026-02-26T14:32:45Z",
-      "structured": []
-    },
-    {
-      "role": "justec",
-      "content": "Das ist ein Bereich, in dem wir besonders viel Erfahrung haben...",
-      "timestamp": "2026-02-26T14:33:02Z",
-      "structured": [
-        {
-          "type": "calendar_slots",
-          "payload": {
-            "slots": [
-              {
-                "id": "slot-1",
-                "start": "2026-03-04T10:00:00+00:00",
-                "end": "2026-03-04T11:00:00+00:00",
-                "display": { "de": "Dienstag, 4. März um 10:00 Uhr (Lissabon)" }
-              }
-            ],
-            "language": "de"
-          }
-        }
-      ]
-    },
-    {
-      "role": "visitor",
-      "action": { "type": "slot_selected", "payload": { "slot_id": "slot-1" } },
-      "content": null,
-      "timestamp": "2026-02-26T14:33:15Z",
-      "structured": []
-    }
-  ]
-}
-```
-
-**Key points for history replay:**
-- Every message has a `structured` array (empty `[]` if no structured content). The frontend re-renders each structured message type as the appropriate UI component.
-- Visitor messages that were **structured actions** (slot selection, phone submission) have `action` set and `content: null`. The frontend renders these as the visitor's action (e.g., "Selected: Tuesday, March 4 at 10:00 AM").
-- Visitor messages that were **text** have `content` set and no `action` field.
-- Calendar slots in history replay should render as **non-interactive** (already selected or expired).
-- Payment requests in history should show the final state (confirmed/pending/expired), not a live checkout button.
-
----
-
-## 13. Conversation Termination
-
-### Termination Sources
-
-| Source | Trigger | Signal |
-|--------|---------|--------|
-| **Security guard** | Guard level reaches 3 (terminate) or 4 (block) | SSE `session_terminated` event |
-| **Budget exhausted** | Token budget consumed | SSE `budget_exhausted` event, then 429 on next request |
-| **Session timeout** | 60 minutes of inactivity | Session expires server-side |
-| **Visitor leaves** | Tab close / navigate away | Frontend sends `POST /close` |
-
-### SSE Event: `session_terminated`
-
-For security guard termination (Level 3 or 4):
-
-```
-event: processing
-data: {}
-
-event: token
-data: {"text": "I don't think I'm able to help you today. If you'd like to reach us, you can call our office. Take care."}
-
-event: session_terminated
-data: {"reason": "terminate", "guard_level": 3, "message": "I don't think I'm able to help you today. If you'd like to reach us, you can call our office. Take care."}
-
-event: stream_end
-data: {}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `reason` | string | `"terminate"` (level 3) or `"block"` (level 4) |
-| `guard_level` | number | The guard level that triggered termination (3 or 4) |
-| `message` | string | The canned termination message (localized to session language) |
-
-**Frontend behavior on `session_terminated`:**
-1. Display Justec's final message (already streamed via `token` events)
-2. Disable the input field
-3. Show a "Session ended" indicator
-4. Optionally show a "Start New Conversation" button (but NOT if `guard_level` is 4 — hard block means the IP is blocked)
-
-**Canned termination messages by language:**
-- **en**: "I don't think I'm able to help you today. If you'd like to reach us, you can call our office. Take care."
-- **de**: "Ich glaube, ich kann Ihnen heute leider nicht weiterhelfen. Wenn Sie uns erreichen möchten, können Sie uns telefonisch kontaktieren. Alles Gute."
-- **pt**: "Infelizmente, não creio que possa ajudá-lo hoje. Se desejar contactar-nos, pode ligar para o nosso escritório. Cuide-se."
-
-### `POST /api/session/:id/close`
-
-Frontend calls this when the visitor navigates away or closes the tab. This is a cleanup signal — the backend marks the session as closed and frees resources.
-
-**Why POST, not DELETE:** `navigator.sendBeacon()` — the most reliable way to fire a request on page unload — only supports POST. Using POST ensures session cleanup happens even when the visitor closes the tab abruptly.
-
-```javascript
-// Frontend: on page unload
-window.addEventListener('beforeunload', () => {
-  navigator.sendBeacon(
-    `/api/session/${sessionId}/close`,
-    JSON.stringify({ reason: 'visitor_left' })
-  );
-});
-```
-
-#### Request
-
-Accepts both `application/json` and `text/plain` Content-Type (sendBeacon compatibility).
-
-```json
-{
-  "reason": "visitor_left"
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `reason` | string | No | Optional close reason. Defaults to `"visitor_left"`. |
-
-#### Response (200)
-
-```json
-{
-  "status": "closed",
-  "reason": "visitor_left"
-}
-```
-
-> **Note:** This endpoint is graceful — it returns 200 even if the session is already closed or not found.
-
----
-
-## 14. Payment Flow & Webhooks
-
-### Payment Flow Overview
-
-1. LLM triggers `request_payment` tool → backend creates Stripe Checkout session + PayPal order
-2. Backend emits `payment_request` structured message with redirect URLs
-3. Frontend renders payment buttons → visitor clicks one → redirected to Stripe/PayPal
-4. Visitor completes payment on provider's page
-5. Provider sends webhook to backend → backend creates calendar event, updates Trello, sends Telegram notification
-6. Visitor is redirected back to chat page with `?payment=success&session_id=...`
-7. If SSE stream is still open, `booking_confirmed` structured message is emitted in-stream
-
-### Stripe Return Flow
-
-After Stripe Checkout, the visitor is redirected to:
-```
-https://surfstyk.com/chat?payment=success&session_id={session_id}
-```
-or on cancellation:
-```
-https://surfstyk.com/chat?payment=cancelled&session_id={session_id}
-```
-
-The frontend checks URL parameters on load and displays the appropriate state.
-
-### PayPal Return Flow
-
-After PayPal approval, the visitor is redirected to:
-
-### `GET /api/paypal/return`
-
-This endpoint captures the PayPal order and redirects the visitor back to the chat.
-
-| Query Parameter | Description |
-|----------------|-------------|
-| `token` | PayPal order ID |
-| `session_id` | Session ID (optional, for context) |
-
-**Redirects to:**
-- Success: `https://surfstyk.com/chat?payment=success&session_id={session_id}`
-- Failure: `https://surfstyk.com/chat?payment=cancelled&session_id={session_id}`
+## Webhooks (Server-to-Server)
 
 ### `POST /api/webhooks/stripe`
 
-Receives Stripe webhook events. Verified using Stripe's webhook signature.
-
-**Required Headers:**
-- `stripe-signature`: Stripe webhook signature
-
-**Handled events:**
-- `checkout.session.completed` — Payment successful. Triggers: calendar event creation, Trello card update, Telegram notification, in-chat `booking_confirmed`.
-- `checkout.session.expired` — Payment abandoned. Updates payment status.
-
-**Response (200):**
-```json
-{
-  "received": true
-}
-```
-
-**Error Responses:**
-- `400 { error: "Missing stripe-signature header" }`
-- `400 { error: "Invalid signature" }`
+Stripe sends `checkout.session.completed` and `checkout.session.expired` events. Raw body verification with Stripe signature.
 
 ### `POST /api/webhooks/paypal`
 
-Receives PayPal webhook events.
+PayPal sends `CHECKOUT.ORDER.APPROVED` events. Verified via PayPal webhook signature API.
 
-**Handled events:**
-- `CHECKOUT.ORDER.APPROVED` — Payment approved. Triggers capture + confirmation flow.
+### `GET /api/paypal/return`
 
-**Response (200):**
-```json
-{
-  "received": true
-}
-```
-
-### Webhook Security
-
-| Provider | Verification Method |
-|----------|-------------------|
-| Stripe | `stripe.webhooks.constructEvent()` with endpoint secret |
-| PayPal | Webhook signature verification via PayPal API headers |
-
-Webhook endpoints do NOT require the session ID header. They are authenticated by the payment provider's signature.
-
----
-
-## 15. Health & Status
-
-### `GET /api/health`
-
-Public health check endpoint (no authentication).
-
-#### Response (200)
-
-```json
-{
-  "status": "ok",
-  "version": "0.1.0",
-  "active_sessions": 0,
-  "queue_length": 0,
-  "uptime_seconds": 86400
-}
-```
-
-### `GET /api/health/detailed`
-
-Detailed health check (restricted to localhost — for monitoring scripts only).
-
-#### Response (200)
-
-```json
-{
-  "status": "ok",
-  "version": "0.1.0",
-  "active_sessions": 0,
-  "queue_length": 0,
-  "uptime_seconds": 86400,
-  "llm": {
-    "provider": "google",
-    "model": "gemini-3-flash-preview",
-    "last_call_ms": null,
-    "errors_last_hour": 0
-  },
-  "database": {
-    "status": "ok"
-  }
-}
-```
-
-#### Response — Forbidden (403)
-
-If accessed from a non-localhost IP:
-
-```json
-{
-  "error": "forbidden",
-  "message": "Detailed health is localhost only"
-}
-```
-
----
-
-## 16. Error Handling
-
-### Error Response Format
-
-All non-SSE error responses follow a consistent format:
-
-```json
-{
-  "error": "error_code",
-  "message": "Human-readable description"
-}
-```
-
-### Error Codes
-
-| HTTP Status | Error Code | Meaning | Frontend Action |
-|-------------|------------|---------|-----------------|
-| 400 | `invalid_request` | Malformed request body or invalid parameters | Show generic error |
-| 403 | `verification_failed` | Turnstile token invalid | Show "refresh and try again" |
-| 403 | `blocked` | IP is hard-blocked (guard level 4) | Show "session ended", disable all interaction |
-| 404 | `session_not_found` | Session ID doesn't exist or expired | Start new session |
-| 410 | `session_closed` | Session was terminated | Show final message, disable input |
-| 429 | `rate_limited` | Too many requests or token budget exhausted | Show "please wait", use `retry_after_seconds` |
-| 500 | `internal_error` | Server error | Show "something went wrong", offer retry |
-
-### In-Stream Errors
-
-LLM errors are delivered as SSE events within the stream (not as HTTP error status codes):
-
-```
-event: error
-data: {"code": "llm_error", "message": "We're experiencing a technical issue. Please try again."}
-
-event: stream_end
-data: {}
-```
-
-| SSE Error Code | Meaning |
-|----------------|---------|
-| `llm_error` | LLM provider returned an error |
-| `internal_error` | Server error during stream processing |
-
-### Retry Strategy
-
-The frontend should implement exponential backoff for retriable errors (500):
-- First retry: 1 second
-- Second retry: 3 seconds
-- Third retry: give up and show error with phone number fallback
-
-For 429 errors, use the `retry_after_seconds` value from the response.
-
----
-
-## 17. SSE Event Reference
-
-Complete catalog of all Server-Sent Events emitted by the message endpoint.
-
-### Response Events (during message streaming)
-
-| Event | Data Schema | Description | Frontend Action |
-|-------|------------|-------------|-----------------|
-| `processing` | `{}` | Request received, LLM processing starting | Show typing indicator (three pulsing dots) |
-| `token` | `{"text": "..."}` | A text token in Justec's response | Hide typing indicator (on first token), append to displayed message |
-| `message_complete` | `{"tokens_used": N, "session_tokens_remaining": N}` | End of Justec's text response | Finalize message display |
-| `structured_message` | `{"type": "...", "payload": {...}}` | Rich UI component (see Section 8) | Render appropriate component |
-| `tier_change` | `{"from": "...", "to": "...", "score": N}` | Qualification tier changed | Log for analytics (no visible change in POC) |
-| `budget_warning` | `{"tokens_remaining": N, "budget_total": N, "message": "approaching_limit"}` | Approaching token budget limit | Optional: show subtle indicator |
-| `budget_exhausted` | `{"tokens_used": N, "budget_total": N}` | Token budget consumed | Prepare for conversation wrap-up |
-| `session_terminated` | `{"reason": "terminate"\|"block", "guard_level": N, "message": "..."}` | Session forcibly ended by security guard | Display message, disable input |
-| `error` | `{"code": "...", "message": "..."}` | Error during streaming | Show error, offer retry |
-| `stream_end` | `{}` | **Terminal event.** Stream is complete. | Stop reading. Close reader. Re-enable input. |
-
-### Structured Message Types
-
-| Type | When | Section |
-|------|------|---------|
-| `calendar_slots` | Justec offers booking times | [Section 8](#type-calendar_slots) |
-| `payment_request` | Justec requests booking deposit | [Section 8](#type-payment_request) |
-| `phone_request` | Justec asks for phone number | [Section 8](#type-phone_request) |
-| `booking_confirmed` | Booking completed (direct or post-payment) | [Section 8](#type-booking_confirmed) |
-
-### Event Ordering (Typical Message)
-
-```
-1. event: processing         (immediate — before LLM call)
-2. event: token              (repeated for each token)
-3. event: token
-4. ...
-5. event: structured_message  (0 or more, emitted mid-stream when tools produce UI data)
-6. event: token              (LLM continues after tool calls)
-7. ...
-8. event: message_complete
-9. event: tier_change         (0 or 1, if score threshold crossed)
-10. event: budget_warning     (0 or 1, if approaching limit)
-11. event: stream_end         (ALWAYS last — frontend stops reading here)
-```
-
-> **Note:** `structured_message` events can appear mid-stream (between token events) because they are emitted when tool calls complete, before the LLM generates its follow-up text.
-
-**Guaranteed:** `stream_end` is ALWAYS emitted, even on errors or termination. The sequence is always: `processing` → [content] → `stream_end`. The frontend can rely on `stream_end` to know when to re-enable the input field and stop the reader.
-
-### Error Stream
-
-If an error occurs during LLM processing:
-
-```
-event: processing
-data: {}
-
-event: error
-data: {"code": "llm_error", "message": "We're experiencing a technical issue. Please try again."}
-
-event: stream_end
-data: {}
-```
-
-### Security Termination Stream
-
-```
-event: processing
-data: {}
-
-event: token
-data: {"text": "I don't think I'm able to help you today..."}
-
-event: session_terminated
-data: {"reason": "terminate", "guard_level": 3, "message": "I don't think I'm able to help you today..."}
-
-event: stream_end
-data: {}
-```
-
-### SSE Connection Management
-
-- The SSE connection is **per-message** (not persistent). Each `POST /api/session/:id/message` opens a new SSE stream that closes after `stream_end`.
-- The frontend MUST stop reading on `stream_end`. The HTTP response body closes immediately after this event.
-- If the connection drops mid-stream (before `stream_end`), the frontend should show what was received so far, re-enable input, and allow the visitor to send a new message (the backend will generate a fresh response with full context).
-- There is no `Last-Event-ID` replay mechanism. If needed, the frontend can call `GET /api/session/:id/history` to reconstruct state.
-
----
-
-## Appendix: Frontend Implementation Notes
-
-These are non-normative suggestions for the frontend team based on the API design.
-
-### Recommended Fetch Pattern (Text Message)
-
-```typescript
-async function sendMessage(sessionId: string, text: string, behavioral: BehavioralSignals) {
-  const response = await fetch(`/api/session/${sessionId}/message`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Session-ID': sessionId,
-    },
-    body: JSON.stringify({ text, behavioral }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new APIError(error);
-  }
-
-  await processSSEStream(response);
-}
-```
-
-### Recommended Fetch Pattern (Structured Action)
-
-```typescript
-async function sendAction(sessionId: string, type: string, payload: object, behavioral: BehavioralSignals) {
-  const response = await fetch(`/api/session/${sessionId}/message`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Session-ID': sessionId,
-    },
-    body: JSON.stringify({ action: { type, payload }, behavioral }),
-  });
-
-  if (!response.ok) {
-    const error = await response.json();
-    throw new APIError(error);
-  }
-
-  await processSSEStream(response);
-}
-```
-
-### SSE Stream Processing
-
-```typescript
-async function processSSEStream(response: Response) {
-  const reader = response.body!.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const events = parseSSEBuffer(buffer);
-    // buffer retains any incomplete event
-
-    for (const event of events) {
-      switch (event.type) {
-        case 'processing':
-          showTypingIndicator();
-          break;
-        case 'token':
-          hideTypingIndicator();  // on first token
-          appendToken(event.data.text);
-          break;
-        case 'structured_message':
-          renderStructuredMessage(event.data);
-          break;
-        case 'message_complete':
-          finalizeMessage(event.data);
-          break;
-        case 'tier_change':
-          logAnalytics('tier_change', event.data);
-          break;
-        case 'session_terminated':
-          handleTermination(event.data);
-          break;
-        case 'stream_end':
-          enableInput();
-          reader.cancel();  // done reading
-          return;
-        case 'error':
-          handleStreamError(event.data);
-          break;
-      }
-    }
-  }
-}
-```
-
-### Action Helpers
-
-```typescript
-// Calendar slot selected
-function selectSlot(slotId: string, display: string) {
-  sendAction(sessionId, 'slot_selected', { slot_id: slotId, display }, collectBehavioral());
-}
-
-// Phone number submitted
-function submitPhone(phone: string) {
-  sendAction(sessionId, 'phone_submitted', { phone }, collectBehavioral());
-}
-
-// Payment: redirect to provider
-function openPayment(url: string) {
-  window.location.href = url;
-}
-
-// GDPR consent (use dedicated endpoint)
-async function respondConsent(consented: boolean) {
-  await fetch(`/api/session/${sessionId}/consent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Session-ID': sessionId },
-    body: JSON.stringify({ consent: consented }),
-  });
-}
-
-// Language switch (use dedicated endpoint)
-async function switchLanguage(language: 'en' | 'de' | 'pt') {
-  const res = await fetch(`/api/session/${sessionId}/language`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Session-ID': sessionId },
-    body: JSON.stringify({ language }),
-  });
-  const data = await res.json();
-  // Optionally re-render greeting with data.greeting
-}
-```
-
-### Session Lifecycle
-
-```typescript
-// 1. Create session on page load (immediately)
-const session = await createSession(language, turnstileToken, referrer);
-sessionStorage.setItem('justec_session_id', session.session_id);
-
-// 2. Display greeting (pre-rendered, no LLM call)
-displayMessage('justec', session.greeting.text);
-
-// 3. On visitor text message
-await sendMessage(session.session_id, text, behavioral);
-
-// 4. On visitor structured action (slot click, phone submit, etc.)
-await sendAction(session.session_id, actionType, payload, behavioral);
-
-// 5. On payment return (check URL params)
-const params = new URLSearchParams(window.location.search);
-if (params.get('payment') === 'success') {
-  const sid = params.get('session_id');
-  // Restore session, show confirmation
-}
-
-// 6. On tab close / navigate away
-window.addEventListener('beforeunload', () => {
-  navigator.sendBeacon(
-    `/api/session/${sessionId}/close`,
-    JSON.stringify({ reason: 'visitor_left' })
-  );
-});
-```
-
----
-
-*This document is the contract between the frontend and backend teams. Changes to this spec require agreement from both sides.*
+Backup capture for PayPal redirect flow. Redirects visitor back to chat with payment status query params.

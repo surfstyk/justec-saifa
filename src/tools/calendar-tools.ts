@@ -54,6 +54,12 @@ export async function handleCheckAvailability(
       end: nextSlot.end,
     };
 
+    const slotInstructions: Record<string, string> = {
+      en: 'Select a time that works for you.',
+      de: 'Wählen Sie eine passende Zeit aus.',
+      pt: 'Selecione um horário que lhe convenha.',
+    };
+
     const structured: StructuredMessage = {
       type: 'calendar_slots',
       payload: {
@@ -64,6 +70,9 @@ export async function handleCheckAvailability(
           display: nextSlot.display,
         }],
         language: lang,
+        timezone: config.calendar.working_hours.timezone,
+        duration_minutes: config.calendar.slot_duration_minutes,
+        instruction: slotInstructions[lang] || slotInstructions.en,
       },
     };
 

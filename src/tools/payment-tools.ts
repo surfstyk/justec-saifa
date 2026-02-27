@@ -1,6 +1,6 @@
 import { getAvailableSlots } from '../integrations/calendar.js';
 import { createCheckoutSession } from '../integrations/stripe.js';
-import { createOrder } from '../integrations/paypal.js';
+import { createOrder, getPayPalClientId } from '../integrations/paypal.js';
 import { getConfig } from '../config.js';
 import type { Session, StructuredMessage } from '../types.js';
 import type { ToolCallResult } from './calendar-tools.js';
@@ -80,6 +80,28 @@ export async function handleRequestPayment(
     const currency = config.payment.currency;
     const displayAmount = `${config.payment.currency_symbol}${(amount / 100).toFixed(2)}`;
 
+    const providers: Record<string, Record<string, unknown>> = {};
+    if (stripeResult) {
+      providers.stripe = {
+        client_secret: stripeResult.client_secret,
+        publishable_key: stripeResult.publishable_key,
+      };
+    }
+    if (paypalResult) {
+      try {
+        providers.paypal = {
+          approve_url: paypalResult.approve_url,
+          order_id: paypalResult.order_id,
+          client_id: getPayPalClientId(),
+        };
+      } catch {
+        providers.paypal = {
+          approve_url: paypalResult.approve_url,
+          order_id: paypalResult.order_id,
+        };
+      }
+    }
+
     const structured: StructuredMessage = {
       type: 'payment_request',
       payload: {
@@ -87,11 +109,10 @@ export async function handleRequestPayment(
         currency,
         display_amount: displayAmount,
         description: config.payment.product_description,
-        stripe_checkout_url: stripeResult?.checkout_url || null,
-        paypal_approve_url: paypalResult?.approve_url || null,
+        providers,
         booking_summary: {
           date: selectedSlot.display[lang],
-          duration: '60 minutes',
+          duration: config.services.duration_display,
           with: config.client.owner,
         },
       },

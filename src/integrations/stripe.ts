@@ -5,11 +5,29 @@ import { getConfig } from '../config.js';
 
 let _stripe: Stripe | null = null;
 let _webhookSecret: string | null = null;
+let _publishableKey: string | null = null;
 
 function loadStripeKey(): string {
   const config = getConfig();
   const keyPath = resolve(config.credentials_path, 'stripe_secret_key');
   return readFileSync(keyPath, 'utf-8').trim();
+}
+
+function loadStripePublishableKey(): string {
+  if (_publishableKey) return _publishableKey;
+
+  const config = getConfig();
+  try {
+    const keyPath = resolve(config.credentials_path, 'stripe_publishable_key');
+    _publishableKey = readFileSync(keyPath, 'utf-8').trim();
+  } catch {
+    _publishableKey = process.env.STRIPE_PUBLISHABLE_KEY || '';
+    if (!_publishableKey) {
+      throw new Error('Stripe publishable key not found. Set STRIPE_PUBLISHABLE_KEY env or place key at credentials_path/stripe_publishable_key');
+    }
+  }
+
+  return _publishableKey;
 }
 
 function loadWebhookSecret(): string {
@@ -45,12 +63,15 @@ export interface CheckoutParams {
 
 export async function createCheckoutSession(
   params: CheckoutParams,
-): Promise<{ checkout_url: string; stripe_session_id: string } | null> {
+): Promise<{ client_secret: string; publishable_key: string; stripe_session_id: string } | null> {
   const config = getConfig();
 
   try {
+    const returnBase = config.payment.return_base_url ?? config.client.website;
+
     const session = await getStripe().checkout.sessions.create({
       mode: 'payment',
+      ui_mode: 'embedded',
       line_items: [
         {
           price_data: {
@@ -74,17 +95,17 @@ export async function createCheckoutSession(
         visitor_phone: params.visitor_phone || '',
         visitor_company: params.visitor_company || '',
       },
-      success_url: `${config.payment.return_base_url ?? 'https://surfstyk.com'}?payment=success&session_id=${params.session_id}`,
-      cancel_url: `${config.payment.return_base_url ?? 'https://surfstyk.com'}?payment=cancelled&session_id=${params.session_id}`,
+      return_url: `${returnBase}?payment=success&session_id=${params.session_id}`,
     });
 
-    if (!session.url) {
-      console.error('[stripe] Checkout session created but no URL returned');
+    if (!session.client_secret) {
+      console.error('[stripe] Checkout session created but no client_secret returned');
       return null;
     }
 
     return {
-      checkout_url: session.url,
+      client_secret: session.client_secret,
+      publishable_key: loadStripePublishableKey(),
       stripe_session_id: session.id,
     };
   } catch (err) {

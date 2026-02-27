@@ -281,6 +281,16 @@ export interface AppConfig {
     chat_id: string;
   };
   greetings: Record<Language, string>;
+  consent_messages: Record<Language, {
+    text: string;
+    privacy_url: string;
+    accept_label: string;
+    decline_label: string;
+  }>;
+  conversation_end_messages: Record<Language, {
+    budget_exhausted: string;
+    security_terminated: string;
+  }>;
   security: {
     internal_keywords: string[];
   };

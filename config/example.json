@@ -60,6 +60,20 @@
   "greetings": {
     "en": "Hello, welcome to Acme Corp. I'm Ava, Jane's personal assistant. How can I help you today?"
   },
+  "consent_messages": {
+    "en": {
+      "text": "We store this conversation to improve our service. Your data is processed in accordance with our privacy policy.",
+      "privacy_url": "https://acme.example.com/privacy",
+      "accept_label": "I agree",
+      "decline_label": "No thanks"
+    }
+  },
+  "conversation_end_messages": {
+    "en": {
+      "budget_exhausted": "This conversation has reached its limit. Please contact us directly for further assistance.",
+      "security_terminated": "This conversation has been ended. Please contact us directly if you need assistance."
+    }
+  },
   "security": {
     "internal_keywords": []
   },

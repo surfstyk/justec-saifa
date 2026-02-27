@@ -245,7 +245,7 @@ async function processPaymentConfirmation(data: PaymentConfirmationData): Promis
             date: data.slot_display,
             slot_start: data.slot_start,
             slot_end: data.slot_end,
-            duration: '60 minutes',
+            duration: config.services.duration_display,
             with: config.client.owner,
             payment_provider: data.provider,
             deposit_amount: config.payment.deposit_amount,

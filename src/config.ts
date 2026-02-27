@@ -79,6 +79,40 @@ const DEFAULTS: AppConfig = {
     de: "Guten Tag und willkommen bei Surfstyk Limited. Ich bin Justec, Hendriks pers\u00f6nliche Assistentin. Wie kann ich Ihnen heute behilflich sein?",
     pt: "Ol\u00e1, bem-vindo \u00e0 Surfstyk LDA. Sou a Justec, assistente pessoal do Hendrik. Como posso ajud\u00e1-lo hoje?",
   },
+  consent_messages: {
+    en: {
+      text: 'We store this conversation to improve our service. Your data is processed in accordance with our privacy policy.',
+      privacy_url: 'https://surfstyk.com/privacy',
+      accept_label: 'I agree',
+      decline_label: 'No thanks',
+    },
+    de: {
+      text: 'Wir speichern dieses Gespräch zur Verbesserung unseres Service. Ihre Daten werden gemäß unserer Datenschutzrichtlinie verarbeitet.',
+      privacy_url: 'https://surfstyk.com/privacy',
+      accept_label: 'Einverstanden',
+      decline_label: 'Nein danke',
+    },
+    pt: {
+      text: 'Armazenamos esta conversa para melhorar o nosso serviço. Os seus dados são tratados de acordo com a nossa política de privacidade.',
+      privacy_url: 'https://surfstyk.com/privacy',
+      accept_label: 'Concordo',
+      decline_label: 'Não, obrigado',
+    },
+  },
+  conversation_end_messages: {
+    en: {
+      budget_exhausted: 'This conversation has reached its limit. Please contact us directly for further assistance.',
+      security_terminated: 'This conversation has been ended. Please contact us directly if you need assistance.',
+    },
+    de: {
+      budget_exhausted: 'Dieses Gespräch hat sein Limit erreicht. Bitte kontaktieren Sie uns direkt für weitere Unterstützung.',
+      security_terminated: 'Dieses Gespräch wurde beendet. Bitte kontaktieren Sie uns direkt, wenn Sie Hilfe benötigen.',
+    },
+    pt: {
+      budget_exhausted: 'Esta conversa atingiu o seu limite. Por favor contacte-nos diretamente para mais assistência.',
+      security_terminated: 'Esta conversa foi terminada. Por favor contacte-nos diretamente se precisar de assistência.',
+    },
+  },
   security: {
     internal_keywords: [
       'Claw God',
@@ -121,6 +155,8 @@ export function loadConfig(): AppConfig {
       trello: parsed.trello ?? DEFAULTS.trello,
       notification: parsed.notification ?? DEFAULTS.notification,
       greetings: parsed.greetings ?? DEFAULTS.greetings,
+      consent_messages: { ...DEFAULTS.consent_messages, ...parsed.consent_messages },
+      conversation_end_messages: { ...DEFAULTS.conversation_end_messages, ...parsed.conversation_end_messages },
       security: { ...DEFAULTS.security, ...parsed.security },
       credentials_path: parsed.credentials_path ?? DEFAULTS.credentials_path,
       database_path: parsed.database_path ?? DEFAULTS.database_path,
