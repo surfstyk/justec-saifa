@@ -272,6 +272,7 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
 
         // Feed result back so Gemini continues with its conversational response
         console.log('[message] report_signals only, no text yet — continuing for text');
+        const lastVisitorText = body.text || 'the visitor';
         messages = [
           ...messages,
           {
@@ -284,7 +285,10 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
           },
           {
             role: 'tool' as const,
-            content: JSON.stringify({ acknowledged: true, instruction: 'Assessment received. Now write your conversational response to the visitor.' }),
+            content: JSON.stringify({
+              acknowledged: true,
+              instruction: `Assessment received. You MUST now write your conversational reply to the visitor. Do NOT call any tools. The visitor said: "${lastVisitorText.slice(0, 200)}"`,
+            }),
             tool_call_id: signalCall.id,
             tool_name: 'report_signals',
             tool_result: { acknowledged: true },
@@ -351,6 +355,14 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
       if (round === MAX_TOOL_ROUNDS) {
         console.warn(`[message] Max tool call rounds (${MAX_TOOL_ROUNDS}) reached`);
       }
+    }
+
+    // 5b. Fallback if LLM produced no visible text (e.g. signal-only loops)
+    if (!fullResponse.trim() && !clientDisconnected) {
+      console.warn('[message] Empty response after all rounds — sending fallback');
+      const fallback = "That's a great point — let me take a moment to consider how best to respond to that. Could you tell me a bit more?";
+      fullResponse = fallback;
+      writeToken(res, fallback);
     }
 
     // 6. Output filter scan on accumulated text
