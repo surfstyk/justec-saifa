@@ -18,6 +18,8 @@ const LEAKAGE_PATTERNS = [
   /signal\s+extraction/i,
   /<signals>/i,
   /<\/signals>/i,
+  /<tool_call:/i,
+  /<\/tool_call>/i,
 ];
 
 export interface OutputFilterResult {

@@ -21,6 +21,7 @@ import {
   writeStructuredMessage, writeSessionTerminated, writeTierChange,
   writeBudgetWarning, writeBudgetExhausted, writeError, writeStreamEnd,
 } from '../sse/writer.js';
+import { ToolCallSanitizer } from '../sse/tool-call-sanitizer.js';
 import type { Session, Message, ChatRequest, QualificationSignals, LLMChatRequest, ToolDefinition } from '../types.js';
 
 const router = Router();
@@ -190,6 +191,7 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
     let tokenCount = 0;
     let capturedSignals: QualificationSignals | null = null;
     const structuredMessages: Message['structured'] = [];
+    const sanitizer = new ToolCallSanitizer();
 
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
       if (clientDisconnected) break;
@@ -212,8 +214,9 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
 
         switch (event.type) {
           case 'token': {
-            fullResponse += event.text;
-            writeToken(res, event.text);
+            const clean = sanitizer.push(event.text);
+            fullResponse += clean;
+            if (clean) writeToken(res, clean);
             break;
           }
           case 'tool_call': {
@@ -231,6 +234,13 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
             return;
           }
         }
+      }
+
+      // Flush any buffered/pending text from the sanitizer
+      const flushed = sanitizer.flush();
+      if (flushed) {
+        fullResponse += flushed;
+        if (!clientDisconnected) writeToken(res, flushed);
       }
 
       // If no tool calls, we're done streaming
