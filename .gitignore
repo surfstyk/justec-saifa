@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.db
+.env
+credentials/
+*.log
+.DS_Store
+surfstyk-notes/

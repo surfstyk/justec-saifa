@@ -1,0 +1,70 @@
+{
+  "client": {
+    "name": "acme",
+    "company": "Acme Corp",
+    "company_pt": "Acme LDA",
+    "owner": "Jane Smith",
+    "timezone": "America/New_York",
+    "languages": ["en"],
+    "phone": "+1 555 000 0000",
+    "website": "https://acme.example.com",
+    "cors_origins": ["https://acme.example.com", "https://www.acme.example.com"],
+    "location": "New York, USA"
+  },
+  "persona": {
+    "name": "Ava",
+    "assistant_role": "ava",
+    "system_name": "Acme Virtual Front Desk",
+    "contact_channel": "Phone",
+    "prompts_dir": "prompts"
+  },
+  "services": {
+    "name": "Discovery Call",
+    "duration_display": "30-minute"
+  },
+  "llm": {
+    "lobby": {
+      "provider": "google",
+      "model": "gemini-3-flash-preview",
+      "max_tokens": 1024
+    },
+    "meeting_room": {
+      "provider": "google",
+      "model": "gemini-3-flash-preview",
+      "max_tokens": 2048
+    }
+  },
+  "calendar": {
+    "working_hours": {
+      "days": [1, 2, 3, 4, 5],
+      "start": "09:00",
+      "end": "17:00",
+      "timezone": "America/New_York"
+    },
+    "slot_duration_minutes": 30,
+    "lookahead_days": 14,
+    "buffer_minutes": 15,
+    "max_offered_slots": 3
+  },
+  "payment": {
+    "deposit_amount": 2500,
+    "currency": "usd",
+    "currency_symbol": "$",
+    "providers": ["stripe"],
+    "deposit_credited": true,
+    "return_base_url": "https://acme.example.com/chat",
+    "deposit_display": "$25",
+    "product_name": "Discovery Call Deposit",
+    "product_description": "30-minute discovery call — credited toward your first engagement"
+  },
+  "greetings": {
+    "en": "Hello, welcome to Acme Corp. I'm Ava, Jane's personal assistant. How can I help you today?"
+  },
+  "security": {
+    "internal_keywords": []
+  },
+  "credentials_path": "/etc/acme/credentials",
+  "database_path": "/var/lib/acme/conversations.db",
+  "dev_mode": true,
+  "port": 3100
+}
