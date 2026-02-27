@@ -351,6 +351,23 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
         ];
       }
 
+      // Inject continuation instruction so the model writes a contextual reply
+      // (mirrors the signal-only handling above — without this, Gemini often
+      //  produces zero text on the follow-up round after action tool calls)
+      const lastVisitorText = body.text || 'the visitor';
+      messages = [
+        ...messages,
+        {
+          role: 'tool' as const,
+          content: JSON.stringify({
+            instruction: `Tool execution complete. Now write a brief, natural reply to the visitor acknowledging the action and guiding next steps. Do NOT call any more tools. The visitor said: "${lastVisitorText.slice(0, 200)}"`,
+          }),
+          tool_call_id: 'system-continuation',
+          tool_name: 'system',
+          tool_result: { acknowledged: true },
+        },
+      ];
+
       // Safety: last round with no more continuation
       if (round === MAX_TOOL_ROUNDS) {
         console.warn(`[message] Max tool call rounds (${MAX_TOOL_ROUNDS}) reached`);
@@ -358,7 +375,8 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
     }
 
     // 5b. Fallback if LLM produced no visible text (e.g. signal-only loops)
-    if (!fullResponse.trim() && !clientDisconnected) {
+    // Skip fallback if structured messages (calendar slots, payment widget, etc.) were already sent
+    if (!fullResponse.trim() && structuredMessages.length === 0 && !clientDisconnected) {
       console.warn('[message] Empty response after all rounds — sending fallback');
       const fallback = "That's a great point — let me take a moment to consider how best to respond to that. Could you tell me a bit more?";
       fullResponse = fallback;
