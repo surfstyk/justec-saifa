@@ -72,6 +72,7 @@ export async function createCheckoutSession(
     const session = await getStripe().checkout.sessions.create({
       mode: 'payment',
       ui_mode: 'embedded',
+      redirect_on_completion: 'if_required',
       line_items: [
         {
           price_data: {
