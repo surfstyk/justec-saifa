@@ -1,0 +1,64 @@
+# CLAUDE.md — justec-public-api
+
+## What This Is
+
+The **Public Persona API** — a Node.js/TypeScript middleware that powers the Justec Virtual Front Desk on surfstyk.com. It sits between the chat frontend and LLM providers, handling session management, qualification scoring, model routing, tool integration, and security.
+
+This is NOT an OpenClaw agent. It's a standalone HTTP service.
+
+## Architecture References
+
+The architecture, API spec, persona design, and business framework live in the surfjust-0001 agent repo. They are your primary references:
+
+- **Architecture**: `../claw-god/agents/surfjust-0001/docs/architecture/PUBLIC-JUSTEC-ARCHITECTURE.md`
+- **API Spec (v0.2.0)**: `../claw-god/agents/surfjust-0001/docs/architecture/PUBLIC-JUSTEC-API-SPEC.md`
+- **Persona**: `../claw-god/agents/surfjust-0001/docs/architecture/PUBLIC-JUSTEC-PERSONA.md`
+- **Framework**: `../claw-god/agents/surfjust-0001/docs/JUSTEC-VIRTUAL-FRONT-DESK-FRAMEWORK.md`
+- **Session Brief**: `../claw-god/agents/surfjust-0001/docs/handoff/JUSTEC-PUBLIC-API-SESSION-BRIEF.md`
+
+Read the Session Brief first — it has deployment targets, credential paths, coordination points, and build priority order.
+
+## Key Technical Constraints
+
+- **Model agnostic**: LLM adapter pattern. Never hardcode a provider. Start with Gemini 3 Flash.
+- **No pip, no Python**: This is a Node.js/TypeScript project. All integrations via npm packages or direct HTTP.
+- **Secrets never in code**: All credentials loaded from `/etc/justec-public/credentials/` on the server. Use environment variables or config file references in development.
+- **SQLite for persistence**: No PostgreSQL, no Redis for POC. In-memory sessions, SQLite for conversation logs.
+- **SSE streaming**: Every message response is a Server-Sent Events stream with a guaranteed `processing` → [content] → `stream_end` lifecycle.
+- **Typed actions, not magic strings**: Visitor UI interactions (slot selection, phone submission, consent) use the structured `action` field, not encoded text patterns.
+
+## Deployment
+
+- **Server**: 46.225.188.5 (Hetzner VPS, same as surfstyk.com)
+- **SSH**: `ssh hendrik@46.225.188.5`
+- **Process**: systemd service `justec-public.service` on port 3100
+- **Reverse proxy**: Caddy routes `/api/*` to localhost:3100
+- **Deploy**: `./deploy.sh` (build + rsync + restart, same pattern as surfstyk.com)
+- **CI/CD**: GitHub Actions on push to main
+
+## Development
+
+```bash
+npm install
+npm run dev          # Local dev server (port 3100)
+npm run build        # TypeScript compile → dist/
+npm run lint         # ESLint
+npm test             # Tests (when available)
+```
+
+## Coordination with Private Justec
+
+This middleware shares Google Workspace and Trello with the private Justec PA (OpenClaw agent on 46.225.69.90). They don't communicate directly — the shared data IS the bridge:
+
+- **Google Calendar**: Both read/write. Source of truth for Hendrik's availability.
+- **Trello**: Separate "Website Leads" board. Private Justec can read it.
+- **Telegram (@surfstykjustec_bot)**: Both send notifications to Hendrik (chat ID: 1465455370).
+
+If you need OAuth scope changes or credential updates that affect private Justec, tell Hendrik — the Claw Father session handles those.
+
+## Git Workflow
+
+- Commit after every meaningful change
+- Push to GitHub regularly
+- Commit message format: `[justec-public] Description of change`
+- Never commit secrets
