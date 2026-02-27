@@ -54,6 +54,7 @@ const DEFAULTS: AppConfig = {
     lookahead_days: 14,
     buffer_minutes: 15,
     max_offered_slots: 3,
+    hold_ttl_minutes: 30,
   },
   payment: {
     deposit_amount: 5000,

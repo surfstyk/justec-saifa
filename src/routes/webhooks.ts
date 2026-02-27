@@ -5,6 +5,7 @@ import { resolve } from 'path';
 import { verifyWebhook } from '../integrations/stripe.js';
 import { captureOrder, verifyWebhookSignature } from '../integrations/paypal.js';
 import { createBookingEvent, getAvailableSlots } from '../integrations/calendar.js';
+import { deleteTentativeHold, deleteHoldsForSession } from '../integrations/calendar-holds.js';
 import { moveToBooked } from '../integrations/trello-cards.js';
 import { notifyBookingConfirmed } from '../integrations/telegram.js';
 import { getSessionStore } from '../session/store-memory.js';
@@ -210,6 +211,25 @@ async function processPaymentConfirmation(data: PaymentConfirmationData): Promis
     session.booking_time = data.slot_start;
   } else {
     console.warn(`[payment] Session ${data.session_id} not found in memory — proceeding with metadata`);
+  }
+
+  // Clean up tentative holds — delete the specific booked hold, then any remaining session holds
+  if (session) {
+    const slotHolds = (session.metadata?.slot_holds as Record<string, string>) || {};
+    const bookedHoldId = slotHolds[data.slot_id];
+    if (bookedHoldId) {
+      deleteTentativeHold(bookedHoldId).catch(err =>
+        console.warn('[payment] Booked hold cleanup failed:', err),
+      );
+    }
+    deleteHoldsForSession(data.session_id).catch(err =>
+      console.warn('[payment] Session holds cleanup failed:', err),
+    );
+  } else {
+    // Session gone from memory — still try to clean up by session ID
+    deleteHoldsForSession(data.session_id).catch(err =>
+      console.warn('[payment] Session holds cleanup failed:', err),
+    );
   }
 
   // Create calendar event

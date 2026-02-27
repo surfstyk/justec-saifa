@@ -259,6 +259,7 @@ export interface AppConfig {
     lookahead_days: number;
     buffer_minutes: number;
     max_offered_slots: number;
+    hold_ttl_minutes?: number;
   };
   payment: {
     deposit_amount: number;

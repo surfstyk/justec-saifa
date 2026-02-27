@@ -1,6 +1,11 @@
+import { createHash } from 'crypto';
 import { getAccessToken } from './google-auth.js';
 import { getConfig } from '../config.js';
 import type { Language } from '../types.js';
+
+function computeSlotId(startIso: string): string {
+  return 'slot-' + createHash('sha256').update(startIso).digest('hex').slice(0, 8);
+}
 
 export interface BusySlot {
   start: string; // ISO 8601
@@ -71,7 +76,6 @@ export function computeAvailableSlots(busySlots: BusySlot[]): AvailableSlot[] {
   const tz = working_hours.timezone;
   const now = new Date();
   const slots: AvailableSlot[] = [];
-  let slotIndex = 1;
 
   for (let dayOffset = 0; dayOffset <= lookahead_days; dayOffset++) {
     const date = new Date(now);
@@ -115,7 +119,7 @@ export function computeAvailableSlots(busySlots: BusySlot[]): AvailableSlot[] {
         const endDt = new Date(slotEnd);
 
         slots.push({
-          id: `slot-${slotIndex}`,
+          id: computeSlotId(startDt.toISOString()),
           start: startDt.toISOString(),
           end: endDt.toISOString(),
           display: {
@@ -124,7 +128,6 @@ export function computeAvailableSlots(busySlots: BusySlot[]): AvailableSlot[] {
             pt: formatSlotDisplay(startDt, 'pt', tz),
           },
         });
-        slotIndex++;
       }
 
       cursor += slotMs;
@@ -154,6 +157,12 @@ export async function getAvailableSlots(): Promise<AvailableSlot[]> {
   slotCaches.set(cacheKey, { slots, expires_at: Date.now() + SLOT_CACHE_TTL });
 
   return slots;
+}
+
+// ── Cache invalidation (used by hold system) ────────────
+
+export function invalidateSlotCache(): void {
+  slotCaches.delete('primary');
 }
 
 // ── Create booking event ─────────────────────────────────

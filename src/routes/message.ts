@@ -192,6 +192,7 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
     let capturedSignals: QualificationSignals | null = null;
     const structuredMessages: Message['structured'] = [];
     const sanitizer = new ToolCallSanitizer();
+    let calendarCheckUsedThisTurn = false;
 
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
       if (clientDisconnected) break;
@@ -299,6 +300,20 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
 
       // Process all action tool calls
       for (const tc of actionCalls) {
+        // Per-turn dedup: prevent duplicate check_calendar_availability calls
+        if (tc.name === 'check_calendar_availability') {
+          if (calendarCheckUsedThisTurn) {
+            console.warn(`[message] Duplicate check_calendar_availability suppressed (round ${round + 1})`);
+            messages = [
+              ...messages,
+              { role: 'assistant' as const, content: '', tool_call_id: tc.id, tool_name: tc.name, tool_result: tc.args, thought_signature: tc.thought_signature },
+              { role: 'tool' as const, content: JSON.stringify({ already_checked: true, message: 'Calendar availability was already checked this turn. Use the slots already shown.' }), tool_call_id: tc.id, tool_name: tc.name, tool_result: { already_checked: true } },
+            ];
+            continue;
+          }
+          calendarCheckUsedThisTurn = true;
+        }
+
         console.log(`[message] Tool call round ${round + 1}: ${tc.name}`);
         const toolResult = await handleToolCall(session, tc.name, tc.args);
 

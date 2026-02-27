@@ -1,4 +1,5 @@
 import { getAvailableSlots } from '../integrations/calendar.js';
+import { createTentativeHold, deleteTentativeHold } from '../integrations/calendar-holds.js';
 import { createCheckoutSession } from '../integrations/stripe.js';
 import { createOrder, getPayPalClientId } from '../integrations/paypal.js';
 import { getConfig } from '../config.js';
@@ -30,8 +31,78 @@ export async function handleRequestPayment(
     const selectedSlot = slots.find(s => s.id === slotId);
 
     if (!selectedSlot) {
+      // Delete stale hold for the unavailable slot
+      const slotHolds = (session.metadata?.slot_holds as Record<string, string>) || {};
+      if (slotHolds[slotId]) {
+        deleteTentativeHold(slotHolds[slotId]).catch(e =>
+          console.warn('[payment-tools] Stale hold cleanup failed:', e),
+        );
+        delete slotHolds[slotId];
+        if (session.metadata) session.metadata.slot_holds = slotHolds;
+      }
+
+      // Fetch 1-2 alternative fresh slots
+      const config = getConfig();
+      const lang = session.visitor_info.language || session.language || 'en';
+      const freshSlots = slots
+        .filter(s => !session.offered_slot_ids.includes(s.id))
+        .slice(0, 2);
+
+      if (freshSlots.length === 0) {
+        const ownerFirst = config.client.owner.split(' ')[0];
+        return {
+          result: {
+            error: true,
+            message: `The selected slot is no longer available and no alternatives remain. Please suggest the visitor contact ${ownerFirst} directly.`,
+          },
+        };
+      }
+
+      // Create tentative holds for alternatives
+      for (const alt of freshSlots) {
+        session.offered_slot_ids.push(alt.id);
+        try {
+          const holdId = await createTentativeHold(session.id, alt);
+          if (holdId) {
+            if (!session.metadata) session.metadata = {};
+            const holds = (session.metadata.slot_holds as Record<string, string>) || {};
+            holds[alt.id] = holdId;
+            session.metadata.slot_holds = holds;
+          }
+        } catch (err) {
+          console.warn('[payment-tools] Failed to create hold for alternative:', err);
+        }
+      }
+
+      // Return a single calendar_slots card with all alternatives
+      const structured: StructuredMessage = {
+        type: 'calendar_slots',
+        payload: {
+          slots: freshSlots.map(s => ({
+            id: s.id,
+            start: s.start,
+            end: s.end,
+            display: s.display,
+          })),
+          language: lang,
+          timezone: config.calendar.working_hours.timezone,
+          duration_minutes: config.calendar.slot_duration_minutes,
+          instruction: {
+            en: 'The previously selected slot is no longer available. Please choose an alternative:',
+            de: 'Der zuvor gewählte Termin ist nicht mehr verfügbar. Bitte wählen Sie eine Alternative:',
+            pt: 'O horário anteriormente selecionado já não está disponível. Por favor escolha uma alternativa:',
+          }[lang] || 'The previously selected slot is no longer available. Please choose an alternative:',
+        },
+      };
+
       return {
-        result: { error: true, message: 'The selected time slot is no longer available. Please check availability again.' },
+        result: {
+          error: true,
+          slot_unavailable: true,
+          alternatives_shown: freshSlots.length,
+          message: `The selected slot is no longer available. ${freshSlots.length} alternative(s) have been shown to the visitor in a slot picker. Ask them to choose one — do NOT call check_calendar_availability.`,
+        },
+        structured,
       };
     }
 

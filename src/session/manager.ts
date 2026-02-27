@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { getConfig } from '../config.js';
 import { getSessionStore, getActiveSessionCount, getQueueLength, addToQueue, removeFromQueue, promoteFromQueue } from './store-memory.js';
 import { persistSession, persistMessage } from '../db/conversations.js';
+import { deleteHoldsForSession, sweepExpiredHolds } from '../integrations/calendar-holds.js';
 import type { Session, Language, CloseReason, SessionStatus } from '../types.js';
 
 export function hashIp(ip: string): string {
@@ -90,6 +91,11 @@ export function closeSession(id: string, reason: CloseReason = 'visitor_left'): 
     }
   }
 
+  // Clean up any tentative calendar holds (fire-and-forget)
+  deleteHoldsForSession(id).catch(err =>
+    console.warn('[session] Hold cleanup failed for', id.slice(0, 8), err),
+  );
+
   // Remove from queue if queued
   removeFromQueue(id);
 
@@ -136,6 +142,12 @@ export function startExpiryTimer(): void {
         closeSession(id, 'timeout');
       }
     }
+
+    // Sweep expired tentative holds (safety net)
+    const holdTtlMs = (config.calendar.hold_ttl_minutes ?? 30) * 60 * 1000;
+    sweepExpiredHolds(holdTtlMs).catch(err =>
+      console.warn('[session] Hold sweep failed:', err),
+    );
   }, 60_000);
 }
 

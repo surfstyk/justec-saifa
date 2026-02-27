@@ -1,4 +1,5 @@
 import { getAvailableSlots, createBookingEvent } from '../integrations/calendar.js';
+import { createTentativeHold } from '../integrations/calendar-holds.js';
 import { moveToBooked } from '../integrations/trello-cards.js';
 import { getConfig } from '../config.js';
 import type { Session, StructuredMessage } from '../types.js';
@@ -45,6 +46,20 @@ export async function handleCheckAvailability(
     }
 
     session.offered_slot_ids.push(nextSlot.id);
+
+    // Create tentative hold on Google Calendar (non-fatal)
+    try {
+      const holdEventId = await createTentativeHold(session.id, nextSlot);
+      if (holdEventId) {
+        if (!session.metadata) session.metadata = {};
+        const slotHolds = (session.metadata.slot_holds as Record<string, string>) || {};
+        slotHolds[nextSlot.id] = holdEventId;
+        session.metadata.slot_holds = slotHolds;
+      }
+    } catch (err) {
+      console.warn('[calendar-tools] Failed to create tentative hold:', err);
+    }
+
     const remaining = maxOffered - session.offered_slot_ids.length;
 
     const slotSummary = {
