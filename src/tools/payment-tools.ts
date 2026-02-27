@@ -121,13 +121,7 @@ export async function handleRequestPayment(
     return {
       result: {
         success: true,
-        amount,
-        currency,
-        display_amount: displayAmount,
-        providers: {
-          stripe: { available: !!stripeResult },
-          paypal: { available: !!paypalResult },
-        },
+        message: 'Checkout widget displayed to visitor. Do not repeat payment details in your response.',
       },
       structured,
     };
