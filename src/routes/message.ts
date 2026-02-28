@@ -298,24 +298,29 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
         continue;
       }
 
-      // Process all action tool calls
-      for (const tc of actionCalls) {
-        // Per-turn dedup: prevent duplicate check_calendar_availability calls
-        if (tc.name === 'check_calendar_availability') {
-          if (calendarCheckUsedThisTurn) {
-            console.warn(`[message] Duplicate check_calendar_availability suppressed (round ${round + 1})`);
-            messages = [
-              ...messages,
-              { role: 'assistant' as const, content: '', tool_call_id: tc.id, tool_name: tc.name, tool_result: tc.args, thought_signature: tc.thought_signature },
-              { role: 'tool' as const, content: JSON.stringify({ already_checked: true, message: 'Calendar availability was already checked this turn. Use the slots already shown.' }), tool_call_id: tc.id, tool_name: tc.name, tool_result: { already_checked: true } },
-            ];
-            continue;
-          }
+      // Enforce one action tool per round — prevents dumping phone + calendar + payment simultaneously
+      if (actionCalls.length > 1) {
+        console.warn(`[message] ${actionCalls.length} action tools in one round — executing only first (${actionCalls[0].name}), deferring rest`);
+      }
+
+      const primaryAction = actionCalls[0];
+      const deferredActions = actionCalls.slice(1);
+
+      // Per-turn dedup: prevent duplicate check_calendar_availability calls
+      if (primaryAction.name === 'check_calendar_availability' && calendarCheckUsedThisTurn) {
+        console.warn(`[message] Duplicate check_calendar_availability suppressed (round ${round + 1})`);
+        messages = [
+          ...messages,
+          { role: 'assistant' as const, content: '', tool_call_id: primaryAction.id, tool_name: primaryAction.name, tool_result: primaryAction.args, thought_signature: primaryAction.thought_signature },
+          { role: 'tool' as const, content: JSON.stringify({ already_checked: true, message: 'Calendar availability was already checked this turn. Use the slots already shown.' }), tool_call_id: primaryAction.id, tool_name: primaryAction.name, tool_result: { already_checked: true } },
+        ];
+      } else {
+        if (primaryAction.name === 'check_calendar_availability') {
           calendarCheckUsedThisTurn = true;
         }
 
-        console.log(`[message] Tool call round ${round + 1}: ${tc.name}`);
-        const toolResult = await handleToolCall(session, tc.name, tc.args);
+        console.log(`[message] Tool call round ${round + 1}: ${primaryAction.name}`);
+        const toolResult = await handleToolCall(session, primaryAction.name, primaryAction.args);
 
         // Emit structured message to frontend if present
         if (toolResult.structured && !clientDisconnected) {
@@ -329,18 +334,28 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
           {
             role: 'assistant' as const,
             content: '',
-            tool_call_id: tc.id,
-            tool_name: tc.name,
-            tool_result: tc.args,
-            thought_signature: tc.thought_signature,
+            tool_call_id: primaryAction.id,
+            tool_name: primaryAction.name,
+            tool_result: primaryAction.args,
+            thought_signature: primaryAction.thought_signature,
           },
           {
             role: 'tool' as const,
             content: JSON.stringify(toolResult.result),
-            tool_call_id: tc.id,
-            tool_name: tc.name,
+            tool_call_id: primaryAction.id,
+            tool_name: primaryAction.name,
             tool_result: toolResult.result,
           },
+        ];
+      }
+
+      // Defer remaining action tools — give the LLM feedback that they were not executed
+      for (const tc of deferredActions) {
+        console.warn(`[message] Deferred tool call: ${tc.name} (one action per round)`);
+        messages = [
+          ...messages,
+          { role: 'assistant' as const, content: '', tool_call_id: tc.id, tool_name: tc.name, tool_result: tc.args, thought_signature: tc.thought_signature },
+          { role: 'tool' as const, content: JSON.stringify({ deferred: true, message: 'One step at a time. Complete the current booking step and wait for the visitor to respond before proceeding.' }), tool_call_id: tc.id, tool_name: tc.name, tool_result: { deferred: true } },
         ];
       }
 

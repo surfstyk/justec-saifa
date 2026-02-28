@@ -84,11 +84,31 @@ export function buildMeetingRoomPrompt(session: Session): {
       content: msg.content!,
     }));
 
-  // Strip payment/calendar tools if payment is already completed — no reason to offer them
-  const allTools = [...getMeetingRoomTools(), SIGNAL_TOOL];
-  const tools = session.payment_status === 'completed'
-    ? allTools.filter(t => t.name !== 'request_payment' && t.name !== 'check_calendar_availability' && t.name !== 'request_phone')
-    : allTools;
+  // Gate booking tools based on session progress — enforce sequential booking flow
+  const tools: ToolDefinition[] = [SIGNAL_TOOL];
+
+  if (session.payment_status !== 'completed') {
+    const hasPhone = !!session.metadata?.phone;
+    const hasHolds = hasPhone && !!session.metadata?.slot_holds
+      && Object.keys(session.metadata.slot_holds as Record<string, string>).length > 0;
+
+    for (const tool of getMeetingRoomTools()) {
+      switch (tool.name) {
+        case 'request_phone':
+          // Always available — first booking step after agreement
+          tools.push(tool);
+          break;
+        case 'check_calendar_availability':
+          // Only after phone is captured
+          if (hasPhone) tools.push(tool);
+          break;
+        case 'request_payment':
+          // Only after calendar slots have been shown (holds exist)
+          if (hasHolds) tools.push(tool);
+          break;
+      }
+    }
+  }
 
   return { system, messages, tools };
 }
