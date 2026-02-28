@@ -100,6 +100,20 @@ const DEFAULTS: AppConfig = {
       decline_label: 'Não, obrigado',
     },
   },
+  post_consent_messages: {
+    en: {
+      accepted: "Perfect, thank you — now, how can I help you today?",
+      declined: "Completely understood — your privacy comes first. Since this site relies on services like Google Fonts and Cloudflare that require your consent to operate, I'm unable to continue the conversation. You're always welcome to come back if you change your mind.",
+    },
+    de: {
+      accepted: "Wunderbar, vielen Dank — wie kann ich Ihnen heute helfen?",
+      declined: "Vollkommen verständlich — Ihre Privatsphäre hat Vorrang. Da diese Website auf Dienste wie Google Fonts und Cloudflare angewiesen ist, die Ihre Zustimmung erfordern, kann ich das Gespräch leider nicht fortsetzen. Sie sind jederzeit willkommen, wenn Sie Ihre Meinung ändern.",
+    },
+    pt: {
+      accepted: "Perfeito, obrigado — como posso ajudá-lo hoje?",
+      declined: "Compreendo perfeitamente — a sua privacidade vem primeiro. Como este site depende de serviços como Google Fonts e Cloudflare que requerem o seu consentimento para funcionar, não me é possível continuar a conversa. Será sempre bem-vindo se mudar de ideias.",
+    },
+  },
   conversation_end_messages: {
     en: {
       budget_exhausted: 'This conversation has reached its limit. Please contact us directly for further assistance.',
@@ -157,6 +171,7 @@ export function loadConfig(): AppConfig {
       notification: parsed.notification ?? DEFAULTS.notification,
       greetings: parsed.greetings ?? DEFAULTS.greetings,
       consent_messages: { ...DEFAULTS.consent_messages, ...parsed.consent_messages },
+      post_consent_messages: { ...DEFAULTS.post_consent_messages, ...parsed.post_consent_messages },
       conversation_end_messages: { ...DEFAULTS.conversation_end_messages, ...parsed.conversation_end_messages },
       security: { ...DEFAULTS.security, ...parsed.security },
       credentials_path: parsed.credentials_path ?? DEFAULTS.credentials_path,

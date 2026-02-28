@@ -288,6 +288,10 @@ export interface AppConfig {
     accept_label: string;
     decline_label: string;
   }>;
+  post_consent_messages: Record<Language, {
+    accepted: string;
+    declined: string;
+  }>;
   conversation_end_messages: Record<Language, {
     budget_exhausted: string;
     security_terminated: string;

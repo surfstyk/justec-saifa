@@ -83,6 +83,7 @@ router.post('/api/session', async (req, res) => {
   }
 
   const consentConfig = config.consent_messages[language] || config.consent_messages.en;
+  const postConsentConfig = config.post_consent_messages[language] || config.post_consent_messages.en;
 
   res.status(200).json({
     session_id: session.id,
@@ -98,6 +99,10 @@ router.post('/api/session', async (req, res) => {
         accept: consentConfig.accept_label,
         decline: consentConfig.decline_label,
       },
+    },
+    post_consent: {
+      accepted: postConsentConfig.accepted,
+      declined: postConsentConfig.declined,
     },
     config: {
       max_message_length: 2000,

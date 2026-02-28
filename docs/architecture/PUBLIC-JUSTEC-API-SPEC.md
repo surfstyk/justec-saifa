@@ -2,7 +2,7 @@
 
 **Project**: Justec Virtual Front Desk (powered by SAIFA)
 **Owner**: Backend Team
-**Version**: v0.5.0
+**Version**: v0.5.1
 **Date**: 2026-02-28
 **Status**: Active — verified against codebase
 
@@ -15,6 +15,7 @@
 | v0.3.0 | 2026-02-27 | Full audit against codebase: corrected payment flow (redirect URLs, not embedded), fixed structured message payloads (calendar_slots, phone_request, booking_confirmed), removed unimplemented types (link, conversation_end, consent_request), documented PayPal return endpoint, corrected session_terminated payload, fixed error codes, updated budget tiers to match config, corrected rate limit messages, added payment/booking fields to state endpoint |
 | v0.4.0 | 2026-02-27 | Second audit: fixed payment_request payload (nested `providers` object, not flat URLs), restored consent_request and conversation_end structured messages (both implemented), fixed session_terminated reason (always `"security"`), added missing calendar_slots fields (timezone, duration_minutes, instruction), added missing phone_request fields (prompt, preferred_messenger, placeholder), fixed score classification example value, corrected status/state endpoint status values (never `"closed"`), fixed rate limit retry_after_seconds values, documented conversation_end in termination/exhaustion streams |
 | v0.5.0 | 2026-02-28 | GDPR consent moved to session creation: `consent_request` now included in `POST /api/session` response. Greeting text updated to lead into consent naturally. Consent-after-first-message retained as fallback. |
+| v0.5.1 | 2026-02-28 | Added `post_consent` to session creation response — localized follow-up messages for accept (enables chat) and decline (explains site unusable, chat stays disabled). |
 
 ---
 
@@ -152,6 +153,10 @@ Creates a new conversation session. **Called on page load** — the frontend cre
       "decline": "Nein danke"
     }
   },
+  "post_consent": {
+    "accepted": "Wunderbar, vielen Dank — wie kann ich Ihnen heute helfen?",
+    "declined": "Vollkommen verständlich — Ihre Privatsphäre hat Vorrang. Da diese Website auf Dienste wie Google Fonts und Cloudflare angewiesen ist, die Ihre Zustimmung erfordern, kann ich das Gespräch leider nicht fortsetzen. Sie sind jederzeit willkommen, wenn Sie Ihre Meinung ändern."
+  },
   "config": {
     "max_message_length": 2000,
     "languages": ["en", "de", "pt"]
@@ -171,6 +176,9 @@ Creates a new conversation session. **Called on page load** — the frontend cre
 | `consent_request.privacy_url` | string | URL to the privacy policy. |
 | `consent_request.options.accept` | string | Localized label for the accept button. |
 | `consent_request.options.decline` | string | Localized label for the decline button. |
+| `post_consent` | object | Localized follow-up messages for after the visitor responds to the consent banner. The frontend renders the appropriate message based on the outcome. |
+| `post_consent.accepted` | string | Message to display when consent is granted. Renders as Justec's next message, then chat input is enabled. |
+| `post_consent.declined` | string | Message to display when consent is declined. Renders as Justec's final message. **Chat input stays disabled** — the site requires consent for third-party services (Google Fonts, Cloudflare) and cannot operate without it. |
 | `config` | object | Session configuration the frontend may need. |
 | `config.max_message_length` | number | Maximum characters per message (2000). Frontend should enforce this. |
 | `config.languages` | string[] | Supported languages for the language switcher. |
@@ -875,9 +883,10 @@ X-RateLimit-Reset: 1709042400
 
 ### Consent Flow
 
-1. **Session creation**: The `POST /api/session` response includes both `greeting` and `consent_request`. The greeting text leads naturally into the consent ("...a quick formality:"). The frontend renders the greeting message followed by the consent banner/card. **Chat input should be blocked until consent is resolved.**
+1. **Session creation**: The `POST /api/session` response includes `greeting`, `consent_request`, and `post_consent`. The greeting text leads naturally into the consent ("...a quick formality:"). The frontend renders the greeting message followed by the consent banner/card. **Chat input should be blocked until consent is resolved.**
 2. **Consent decision**: When the visitor accepts or declines, the frontend calls `POST /api/session/:id/consent`.
-3. **After consent**: Enable chat input. The conversation begins.
+3. **After consent — accepted**: The frontend renders `post_consent.accepted` as Justec's next message and enables chat input. The conversation begins.
+4. **After consent — declined**: The frontend renders `post_consent.declined` as Justec's final message. **Chat input stays disabled.** The site relies on third-party services (Google Fonts, Cloudflare) that require consent — without it, the visitor cannot use the site. The message is a polite closure.
 
 > **Fallback**: If the frontend does not handle `consent_request` at session creation, the backend will still emit it as a `consent_request` structured message after the first assistant response (same as v0.4.0 behavior). This fallback is for backward compatibility and will be removed in a future version.
 
@@ -923,10 +932,11 @@ X-RateLimit-Reset: 1709042400
 
 | Feature | Consented | Declined |
 |---------|-----------|---------|
+| Chat enabled | Yes | **No** — site requires consent for third-party services |
 | Conversation logged to SQLite | Yes | No |
 | Trello card created (if qualified) | Yes | No |
-| Qualification scoring | Yes | Yes |
-| Booking still possible | Yes | Yes |
+| Qualification scoring | Yes | No |
+| Booking still possible | Yes | No |
 
 ---
 
