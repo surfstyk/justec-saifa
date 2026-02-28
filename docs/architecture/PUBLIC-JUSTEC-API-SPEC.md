@@ -2,8 +2,8 @@
 
 **Project**: Justec Virtual Front Desk (powered by SAIFA)
 **Owner**: Backend Team
-**Version**: v0.4.0
-**Date**: 2026-02-27
+**Version**: v0.5.0
+**Date**: 2026-02-28
 **Status**: Active — verified against codebase
 
 ### Changelog
@@ -14,6 +14,7 @@
 | v0.2.0 | 2026-02-26 | Fix: explicit stream_end event, typed action field (replaces magic strings), POST /close (replaces DELETE), structured messages in history replay, processing event for typing indicator, language switch endpoint, session creation on page load, Stripe embedded checkout, 2s queue polling |
 | v0.3.0 | 2026-02-27 | Full audit against codebase: corrected payment flow (redirect URLs, not embedded), fixed structured message payloads (calendar_slots, phone_request, booking_confirmed), removed unimplemented types (link, conversation_end, consent_request), documented PayPal return endpoint, corrected session_terminated payload, fixed error codes, updated budget tiers to match config, corrected rate limit messages, added payment/booking fields to state endpoint |
 | v0.4.0 | 2026-02-27 | Second audit: fixed payment_request payload (nested `providers` object, not flat URLs), restored consent_request and conversation_end structured messages (both implemented), fixed session_terminated reason (always `"security"`), added missing calendar_slots fields (timezone, duration_minutes, instruction), added missing phone_request fields (prompt, preferred_messenger, placeholder), fixed score classification example value, corrected status/state endpoint status values (never `"closed"`), fixed rate limit retry_after_seconds values, documented conversation_end in termination/exhaustion streams |
+| v0.5.0 | 2026-02-28 | GDPR consent moved to session creation: `consent_request` now included in `POST /api/session` response. Greeting text updated to lead into consent naturally. Consent-after-first-message retained as fallback. |
 
 ---
 
@@ -141,7 +142,15 @@ Creates a new conversation session. **Called on page load** — the frontend cre
   "status": "active",
   "greeting": {
     "language": "de",
-    "text": "Guten Tag und willkommen bei Surfstyk Limited. Ich bin Justec, Hendriks persönliche Assistentin. Wie kann ich Ihnen heute behilflich sein?"
+    "text": "Willkommen bei Surfstyk Limited — ich bin Justec, Hendriks persönliche Assistentin. Bevor wir loslegen, eine kurze Formalität:"
+  },
+  "consent_request": {
+    "text": "Wir speichern dieses Gespräch zur Verbesserung unseres Service. Ihre Daten werden gemäß unserer Datenschutzrichtlinie verarbeitet.",
+    "privacy_url": "https://surfstyk.com/privacy",
+    "options": {
+      "accept": "Einverstanden",
+      "decline": "Nein danke"
+    }
   },
   "config": {
     "max_message_length": 2000,
@@ -154,9 +163,14 @@ Creates a new conversation session. **Called on page load** — the frontend cre
 |-------|------|-------------|
 | `session_id` | string (UUID) | Unique session identifier. Frontend must include this in all subsequent requests. |
 | `status` | string | `"active"` or `"queued"` (see below). |
-| `greeting` | object | Pre-rendered greeting in the detected language. **No LLM call is made.** The frontend renders this as Justec's first message. |
+| `greeting` | object | Pre-rendered greeting in the detected language. **No LLM call is made.** The frontend renders this as Justec's first message. The text naturally leads into the consent request below. |
 | `greeting.language` | string | The language the backend chose for the greeting. |
-| `greeting.text` | string | The greeting text. |
+| `greeting.text` | string | The greeting text. Ends with a lead-in to the consent (e.g. "...a quick formality:"). |
+| `consent_request` | object | GDPR consent data. Frontend should render this directly below the greeting as a consent banner/card. When the visitor responds, call `POST /api/session/:id/consent`. **The frontend should block chat input until consent is handled.** |
+| `consent_request.text` | string | Localized consent explanation text. |
+| `consent_request.privacy_url` | string | URL to the privacy policy. |
+| `consent_request.options.accept` | string | Localized label for the accept button. |
+| `consent_request.options.decline` | string | Localized label for the decline button. |
 | `config` | object | Session configuration the frontend may need. |
 | `config.max_message_length` | number | Maximum characters per message (2000). Frontend should enforce this. |
 | `config.languages` | string[] | Supported languages for the language switcher. |
@@ -748,7 +762,9 @@ Sent when a booking is successfully completed — either directly via calendar t
 
 ### Type: `consent_request`
 
-Emitted automatically after the first assistant response if GDPR consent is still pending. This appears after `message_complete` in the stream.
+**Primary delivery (v0.5.0+):** Included in the `POST /api/session` response alongside the greeting. The frontend should render it at session creation, before the visitor types anything.
+
+**Fallback delivery:** If the frontend does not handle consent at session creation, the backend still emits this as a structured message after the first assistant response (when consent is still pending). This fallback is for backward compatibility.
 
 ```json
 {
@@ -859,9 +875,11 @@ X-RateLimit-Reset: 1709042400
 
 ### Consent Flow
 
-1. **Session creation**: No consent required. The session is functional (legitimate interest).
-2. **First visitor message**: After the LLM responds, the backend automatically emits a `consent_request` structured message (see [Section 8](#type-consent_request)).
-3. **Consent decision**: Frontend sends the decision via the dedicated endpoint.
+1. **Session creation**: The `POST /api/session` response includes both `greeting` and `consent_request`. The greeting text leads naturally into the consent ("...a quick formality:"). The frontend renders the greeting message followed by the consent banner/card. **Chat input should be blocked until consent is resolved.**
+2. **Consent decision**: When the visitor accepts or declines, the frontend calls `POST /api/session/:id/consent`.
+3. **After consent**: Enable chat input. The conversation begins.
+
+> **Fallback**: If the frontend does not handle `consent_request` at session creation, the backend will still emit it as a `consent_request` structured message after the first assistant response (same as v0.4.0 behavior). This fallback is for backward compatibility and will be removed in a future version.
 
 ### `POST /api/session/:id/consent`
 
@@ -1639,10 +1657,18 @@ async function switchLanguage(language: 'en' | 'de' | 'pt') {
 const session = await createSession(language, turnstileToken, referrer);
 sessionStorage.setItem('justec_session_id', session.session_id);
 
-// 2. Display greeting (pre-rendered, no LLM call)
+// 2. Display greeting + consent (pre-rendered, no LLM call)
 displayMessage('justec', session.greeting.text);
+renderConsentBanner(session.consent_request);
+disableChatInput(); // Block input until consent is resolved
 
-// 3. On visitor text message
+// 3. On consent response
+async function handleConsent(accepted: boolean) {
+  await respondConsent(accepted);
+  enableChatInput(); // Unblock input after consent
+}
+
+// 4. On visitor text message
 await sendMessage(session.session_id, text, behavioral);
 
 // 4. On visitor structured action (slot click, phone submit, etc.)

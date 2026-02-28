@@ -82,12 +82,22 @@ router.post('/api/session', async (req, res) => {
     return;
   }
 
+  const consentConfig = config.consent_messages[language] || config.consent_messages.en;
+
   res.status(200).json({
     session_id: session.id,
     status: 'active',
     greeting: {
       language,
       text: config.greetings[language],
+    },
+    consent_request: {
+      text: consentConfig.text,
+      privacy_url: consentConfig.privacy_url,
+      options: {
+        accept: consentConfig.accept_label,
+        decline: consentConfig.decline_label,
+      },
     },
     config: {
       max_message_length: 2000,
