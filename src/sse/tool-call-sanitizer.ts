@@ -3,27 +3,59 @@ const TAG_END = '/>';
 const MAX_BUFFER = 8192;
 
 /**
- * Streaming sanitizer that strips `<tool_call:.../>` XML leaked by Gemini.
+ * Internal tool names that should never appear in visitor-facing text.
+ * Used to detect function-call-style leaks like `report_signals(...)`.
+ */
+const TOOL_NAMES = [
+  'report_signals',
+  'check_calendar_availability',
+  'book_appointment',
+  'request_phone',
+  'request_payment',
+];
+
+/**
+ * Preamble phrases that Gemini emits before listing tool calls as text.
+ * Matched case-insensitively. Entire line (up to next \n) is discarded.
+ */
+const PREAMBLE_PATTERNS = [
+  'tagged calls:',
+  'tool calls:',
+  'function calls:',
+  'calling tools:',
+  'tool call:',
+  'function call:',
+];
+
+type Mode = 'passthrough' | 'xml' | 'fn_call' | 'line';
+
+/**
+ * Streaming sanitizer that strips leaked tool invocations from Gemini output.
  *
- * Operates in two modes:
- * - **Pass-through**: scans each chunk for `<tool_call:`, emits everything
- *   before it, then switches to buffering. Holds back ambiguous trailing
- *   chars (partial prefix like `<tool_`) until the next chunk resolves.
- * - **Buffering**: accumulates text until `/>` is found, discards the tag,
- *   emits any text after it.
+ * Detects three pattern types:
+ * 1. XML tags:       `<tool_call:report_signals .../>`
+ * 2. Function calls: `report_signals(qualification={...})`
+ * 3. Preamble lines: `Tagged calls:\n`
  *
- * Safety valve: if the buffer exceeds 8 KB without finding `/>`, flushes as-is.
+ * Operates as a state machine with modes:
+ * - **passthrough**: Scans for triggers, holds back partial matches at chunk boundaries
+ * - **xml**: Buffers until `/>`, discards tag
+ * - **fn_call**: Buffers while tracking `(`/`)` depth; discards call when balanced
+ * - **line**: Buffers until `\n`, discards line
+ *
+ * Safety valve: flushes buffer as-is if it exceeds 8KB without finding an end delimiter.
  */
 export class ToolCallSanitizer {
-  private buffering = false;
+  private mode: Mode = 'passthrough';
   private buffer = '';
-  private pending = ''; // partial prefix held back in pass-through mode
+  private pending = ''; // partial trigger held back in passthrough mode
+  private parenDepth = 0;
 
   /**
    * Feed a chunk of streamed text. Returns sanitized text to emit (may be empty).
    */
   push(chunk: string): string {
-    if (this.buffering) {
+    if (this.mode !== 'passthrough') {
       return this.handleBuffering(chunk);
     }
     return this.handlePassThrough(chunk);
@@ -31,17 +63,18 @@ export class ToolCallSanitizer {
 
   /**
    * Flush any remaining state at end-of-stream.
-   * Discards incomplete tags (buffering mode), emits pending partials (pass-through).
+   * Discards incomplete buffered content; emits pending partials.
    */
   flush(): string {
-    if (this.buffering) {
-      // Incomplete tag at end of stream — discard it
-      console.warn(`[tool-call-sanitizer] Discarding incomplete tag (${this.buffer.length} chars)`);
+    if (this.mode !== 'passthrough') {
+      // Incomplete leak at end of stream — discard it
+      console.warn(`[tool-call-sanitizer] Discarding incomplete ${this.mode} (${this.buffer.length} chars)`);
       this.buffer = '';
-      this.buffering = false;
+      this.mode = 'passthrough';
+      this.parenDepth = 0;
       return '';
     }
-    // Emit any held-back partial prefix — it wasn't a real tag start
+    // Emit any held-back partial prefix — it wasn't a real trigger
     const out = this.pending;
     this.pending = '';
     return out;
@@ -51,16 +84,28 @@ export class ToolCallSanitizer {
     const text = this.pending + chunk;
     this.pending = '';
 
-    const idx = text.indexOf(TAG_START);
-    if (idx !== -1) {
-      // Found tag start — emit everything before it, buffer the rest
-      this.buffering = true;
-      this.buffer = text.slice(idx);
-      // Check if we already have the end in this chunk
-      return this.drainBuffer(text.slice(0, idx));
+    // Try to find the earliest trigger in the text
+    const match = this.findEarliestTrigger(text);
+    if (match) {
+      const before = text.slice(0, match.index);
+      const remaining = text.slice(match.index);
+
+      this.mode = match.mode;
+      this.buffer = remaining;
+      this.parenDepth = 0;
+
+      // For fn_call, count opening paren(s) already in buffer
+      if (match.mode === 'fn_call') {
+        for (const ch of remaining) {
+          if (ch === '(') this.parenDepth++;
+          else if (ch === ')') this.parenDepth--;
+        }
+      }
+
+      return this.drainBuffer(before);
     }
 
-    // Check for partial prefix at the end (e.g. text ends with "<tool_c")
+    // Check for partial trigger at end of text
     const holdBack = this.partialMatchAtEnd(text);
     if (holdBack > 0) {
       this.pending = text.slice(-holdBack);
@@ -75,10 +120,11 @@ export class ToolCallSanitizer {
 
     // Safety valve
     if (this.buffer.length > MAX_BUFFER) {
-      console.warn(`[tool-call-sanitizer] Buffer exceeded ${MAX_BUFFER} chars, flushing as-is`);
+      console.warn(`[tool-call-sanitizer] Buffer exceeded ${MAX_BUFFER} chars in ${this.mode} mode, flushing`);
       const out = this.buffer;
       this.buffer = '';
-      this.buffering = false;
+      this.mode = 'passthrough';
+      this.parenDepth = 0;
       return out;
     }
 
@@ -86,24 +132,39 @@ export class ToolCallSanitizer {
   }
 
   /**
-   * While in buffering mode, look for `/>` to close the tag.
-   * May find multiple tags. Returns accumulated clean output.
+   * Attempt to find the end delimiter for the current mode and consume the leak.
+   * May find multiple consecutive leaks. Returns accumulated clean output.
    */
   private drainBuffer(prefix: string): string {
     let out = prefix;
 
-    while (this.buffering) {
-      const endIdx = this.buffer.indexOf(TAG_END);
-      if (endIdx === -1) break;
-
-      // Discard everything up to and including `/>`
-      const after = this.buffer.slice(endIdx + TAG_END.length);
-      this.buffer = '';
-      this.buffering = false;
-
-      // Process remainder — may contain another tag
-      if (after.length > 0) {
-        out += this.handlePassThrough(after);
+    while (this.mode !== 'passthrough') {
+      if (this.mode === 'xml') {
+        const endIdx = this.buffer.indexOf(TAG_END);
+        if (endIdx === -1) break;
+        const after = this.buffer.slice(endIdx + TAG_END.length);
+        console.warn(`[tool-call-sanitizer] Stripped XML tag (${endIdx + TAG_END.length} chars)`);
+        this.buffer = '';
+        this.mode = 'passthrough';
+        if (after.length > 0) out += this.handlePassThrough(after);
+      } else if (this.mode === 'fn_call') {
+        // Track paren depth through new content
+        const resolved = this.advanceParenDepth();
+        if (resolved === -1) break; // no closing paren yet
+        const after = this.buffer.slice(resolved + 1);
+        console.warn(`[tool-call-sanitizer] Stripped function call (${resolved + 1} chars)`);
+        this.buffer = '';
+        this.mode = 'passthrough';
+        this.parenDepth = 0;
+        if (after.length > 0) out += this.handlePassThrough(after);
+      } else if (this.mode === 'line') {
+        const nlIdx = this.buffer.indexOf('\n');
+        if (nlIdx === -1) break; // wait for newline
+        const after = this.buffer.slice(nlIdx + 1);
+        console.warn(`[tool-call-sanitizer] Stripped preamble line`);
+        this.buffer = '';
+        this.mode = 'passthrough';
+        if (after.length > 0) out += this.handlePassThrough(after);
       }
     }
 
@@ -111,14 +172,101 @@ export class ToolCallSanitizer {
   }
 
   /**
-   * Checks if `text` ends with a partial match of `<tool_call:`.
+   * Scan the buffer for the position where paren depth returns to 0.
+   * Returns the index of the closing `)`, or -1 if not yet balanced.
+   *
+   * We re-scan from the start because the buffer may have been assembled
+   * from multiple chunks with interleaved counting.
+   */
+  private advanceParenDepth(): number {
+    let depth = 0;
+    for (let i = 0; i < this.buffer.length; i++) {
+      if (this.buffer[i] === '(') depth++;
+      else if (this.buffer[i] === ')') {
+        depth--;
+        if (depth === 0) return i;
+      }
+    }
+    this.parenDepth = depth;
+    return -1;
+  }
+
+  /**
+   * Find the earliest trigger in text, returning its index and mode.
+   */
+  private findEarliestTrigger(text: string): { index: number; mode: Mode } | null {
+    let best: { index: number; mode: Mode } | null = null;
+
+    // 1. XML tag: <tool_call:
+    const xmlIdx = text.indexOf(TAG_START);
+    if (xmlIdx !== -1) {
+      best = { index: xmlIdx, mode: 'xml' };
+    }
+
+    // 2. Function call: tool_name(
+    for (const name of TOOL_NAMES) {
+      const fnIdx = text.indexOf(name + '(');
+      if (fnIdx !== -1 && (!best || fnIdx < best.index)) {
+        best = { index: fnIdx, mode: 'fn_call' };
+      }
+    }
+
+    // 3. Preamble lines (case-insensitive)
+    const textLower = text.toLowerCase();
+    for (const preamble of PREAMBLE_PATTERNS) {
+      const pIdx = textLower.indexOf(preamble);
+      if (pIdx !== -1 && (!best || pIdx < best.index)) {
+        best = { index: pIdx, mode: 'line' };
+      }
+    }
+
+    return best;
+  }
+
+  /**
+   * Check if text ends with a partial match of any trigger string.
    * Returns the number of trailing characters to hold back.
    */
   private partialMatchAtEnd(text: string): number {
-    // Check progressively longer suffixes of text against prefixes of TAG_START
-    const maxCheck = Math.min(text.length, TAG_START.length - 1);
+    let maxHold = 0;
+
+    // Check partial match against XML tag start
+    maxHold = Math.max(maxHold, this.partialSuffixMatch(text, TAG_START));
+
+    // Check partial match against each tool_name + "("
+    for (const name of TOOL_NAMES) {
+      maxHold = Math.max(maxHold, this.partialSuffixMatch(text, name + '('));
+    }
+
+    // Check partial match against preamble patterns
+    for (const preamble of PREAMBLE_PATTERNS) {
+      maxHold = Math.max(maxHold, this.partialSuffixMatchCI(text, preamble));
+    }
+
+    return maxHold;
+  }
+
+  /**
+   * Returns how many chars at the end of `text` match a prefix of `trigger`.
+   */
+  private partialSuffixMatch(text: string, trigger: string): number {
+    const maxCheck = Math.min(text.length, trigger.length - 1);
     for (let len = maxCheck; len >= 1; len--) {
-      if (text.endsWith(TAG_START.slice(0, len))) {
+      if (text.endsWith(trigger.slice(0, len))) {
+        return len;
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * Case-insensitive version of partialSuffixMatch.
+   */
+  private partialSuffixMatchCI(text: string, trigger: string): number {
+    const textLower = text.toLowerCase();
+    const maxCheck = Math.min(textLower.length, trigger.length - 1);
+    for (let len = maxCheck; len >= 1; len--) {
+      if (textLower.endsWith(trigger.slice(0, len))) {
         return len;
       }
     }

@@ -20,6 +20,19 @@ const LEAKAGE_PATTERNS = [
   /<\/signals>/i,
   /<tool_call:/i,
   /<\/tool_call>/i,
+  // Tool call function-style leaks (Gemini emits these as plain text)
+  /report_signals\s*\(/,
+  /check_calendar_availability\s*\(/,
+  /request_payment\s*\(/,
+  /request_phone\s*\(/,
+  /book_appointment\s*\(/,
+  // Internal scoring field names
+  /problem_specificity/,
+  /engagement_depth/,
+  /buying_signals.*disqualification_signals/,
+  /recommended_action.*continue_discovery/,
+  // Preamble lines before leaked tool calls
+  /Tagged\s+calls:/i,
 ];
 
 export interface OutputFilterResult {

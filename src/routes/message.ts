@@ -406,6 +406,8 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
     const outputCheck = filterOutput(fullResponse);
     if (!outputCheck.passed) {
       logSecurityEvent(session.id, `output_filter:${outputCheck.reason}`, fullResponse.slice(0, 200), session.ip_hash);
+      // Sanitize stored text so the model doesn't see its own leaked content in subsequent turns
+      fullResponse = "That's a great point — let me take a moment to consider how best to respond to that. Could you tell me a bit more?";
       // Use threatLevel 1 (not 2) — output leakage is less severe than input injection.
       // With level 1: first offense → guard 1 (redirect), second → guard 2 (redirect),
       // third → guard 3 (terminate). Gives 3 chances instead of 2 before termination.
