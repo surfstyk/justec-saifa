@@ -448,16 +448,6 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
 
       writeMessageComplete(res, tokenCount, budgetResult.remaining);
 
-      // Emit consent request after the first assistant response if consent is pending
-      if (session.messages_count === 1 && session.consent === 'pending') {
-        const consentConfig = config.consent_messages[lang] || config.consent_messages.en;
-        writeStructuredMessage(res, 'consent_request', {
-          text: consentConfig.text,
-          privacy_url: consentConfig.privacy_url,
-          options: { accept: consentConfig.accept_label, decline: consentConfig.decline_label },
-        });
-      }
-
       if (budgetResult.exhausted) {
         const endMessages = config.conversation_end_messages[lang] || config.conversation_end_messages.en;
         writeBudgetExhausted(res, session.tokens_used, budgetResult.total);

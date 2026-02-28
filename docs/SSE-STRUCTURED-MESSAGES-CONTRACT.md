@@ -289,7 +289,7 @@ All actions are sent to `POST /api/session/:id/message` with the `action` field.
 | `slot_selected`              | `{ "slot_id": "slot-1", "display": "..." }` | After `calendar_slots` rendered |
 | `phone_submitted`            | `{ "phone": "+491701234567" }`             | After `phone_request` rendered  |
 | `payment_provider_selected`  | `{ "provider": "stripe" \| "paypal" }`     | Optional — frontend can send this to inform the LLM which provider was chosen |
-| `consent_response`           | `{ "consented": true \| false }`           | Via `POST /api/session/:id/consent` or action |
+| `consent_response`           | `{ "consented": true \| false }`           | Via `POST /api/session/:id/consent` (dedicated endpoint) |
 | `language_changed`           | `{ "language": "en" \| "de" \| "pt" }`    | Via `POST /api/session/:id/language` or action |
 
 ---
@@ -370,7 +370,7 @@ When the visitor returns to `surfstyk.com/?payment=success`:
 
 The following types from the original API spec v0.2.0 have been **dropped**:
 - `payment_confirmed` — not emitted as a structured message; frontend detects completion via state polling
-- `consent_request` — consent is handled via natural language + dedicated endpoint
+- `consent_request` — consent is handled at session creation (`POST /api/session` response) + dedicated endpoint
 - `link` — not needed
 - `conversation_end` — covered by `session_terminated` and `budget_exhausted` events
 

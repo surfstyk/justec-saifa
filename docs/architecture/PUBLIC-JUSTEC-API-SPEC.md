@@ -2,7 +2,7 @@
 
 **Project**: Justec Virtual Front Desk (powered by SAIFA)
 **Owner**: Backend Team
-**Version**: v0.5.1
+**Version**: v0.5.2
 **Date**: 2026-02-28
 **Status**: Active — verified against codebase
 
@@ -16,6 +16,7 @@
 | v0.4.0 | 2026-02-27 | Second audit: fixed payment_request payload (nested `providers` object, not flat URLs), restored consent_request and conversation_end structured messages (both implemented), fixed session_terminated reason (always `"security"`), added missing calendar_slots fields (timezone, duration_minutes, instruction), added missing phone_request fields (prompt, preferred_messenger, placeholder), fixed score classification example value, corrected status/state endpoint status values (never `"closed"`), fixed rate limit retry_after_seconds values, documented conversation_end in termination/exhaustion streams |
 | v0.5.0 | 2026-02-28 | GDPR consent moved to session creation: `consent_request` now included in `POST /api/session` response. Greeting text updated to lead into consent naturally. Consent-after-first-message retained as fallback. |
 | v0.5.1 | 2026-02-28 | Added `post_consent` to session creation response — localized follow-up messages for accept (enables chat) and decline (explains site unusable, chat stays disabled). |
+| v0.5.2 | 2026-02-28 | Removed `consent_request` structured message fallback — consent handled exclusively at session creation. Removed inline LLM consent question from prompts. |
 
 ---
 
@@ -338,9 +339,9 @@ data: {}
 
 1. **`processing`** — Sent immediately when the backend begins handling the request (before any LLM call). The frontend shows the typing indicator (three pulsing dots) on this event. This eliminates dead air between the POST and first token.
 2. **`token`** — Streamed response tokens. Frontend hides the typing indicator on the first `token` event and begins rendering text.
-3. **`structured_message`** — Rich UI components (calendar slots, phone input, payment, etc.). These can appear mid-stream when tool calls complete, or after `message_complete` for metadata messages (consent request, conversation end).
+3. **`structured_message`** — Rich UI components (calendar slots, phone input, payment, etc.). These can appear mid-stream when tool calls complete, or after `message_complete` for metadata messages (conversation end).
 4. **`message_complete`** — End of Justec's text response. May be followed by metadata events.
-5. **Metadata events** — `consent_request`, `conversation_end`, `tier_change`, `budget_warning`, etc. Zero or more.
+5. **Metadata events** — `conversation_end`, `tier_change`, `budget_warning`, etc. Zero or more.
 6. **`stream_end`** — **Terminal event.** The stream is complete. The frontend MUST stop reading on this event. The HTTP response body closes immediately after. Always the last event in every stream — including error streams and termination streams.
 
 Each SSE event has an `event` type and a JSON `data` payload. See [Section 17: SSE Event Reference](#17-sse-event-reference) for the complete event catalog.
@@ -563,7 +564,7 @@ Returns the full session state. Useful for the frontend to check status after re
 
 The LLM can trigger tool calls that result in **structured message blocks** within the SSE stream. These are not plain text — they carry typed data that the frontend renders as rich UI components.
 
-Additionally, the backend emits metadata structured messages (`consent_request`, `conversation_end`) after `message_complete` based on session state.
+Additionally, the backend emits metadata structured messages (`conversation_end`) after `message_complete` based on session state.
 
 ### SSE Event: `structured_message`
 
@@ -768,36 +769,9 @@ Sent when a booking is successfully completed — either directly via calendar t
 
 > **Note:** The two `booking_confirmed` shapes have different fields. The frontend should handle both: check for `slot` (direct booking) or `slot_start` (payment flow) to determine the variant.
 
-### Type: `consent_request`
+### Type: `consent_request` (Removed)
 
-**Primary delivery (v0.5.0+):** Included in the `POST /api/session` response alongside the greeting. The frontend should render it at session creation, before the visitor types anything.
-
-**Fallback delivery:** If the frontend does not handle consent at session creation, the backend still emits this as a structured message after the first assistant response (when consent is still pending). This fallback is for backward compatibility.
-
-```json
-{
-  "type": "consent_request",
-  "payload": {
-    "text": "We store this conversation to improve our service. You can read our privacy policy for details.",
-    "privacy_url": "https://surfstyk.com/privacy",
-    "options": {
-      "accept": "I agree",
-      "decline": "No thanks"
-    }
-  }
-}
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `text` | string | Localized consent explanation text |
-| `privacy_url` | string | URL to the privacy policy |
-| `options.accept` | string | Localized label for the accept button |
-| `options.decline` | string | Localized label for the decline button |
-
-**Frontend renders:** A consent banner or inline card with the `text`, a link to `privacy_url`, and two buttons using the `options` labels. When the visitor responds, call `POST /api/session/:id/consent` (see [Section 10](#10-gdpr-consent)).
-
-> **Note:** This is emitted **once** — only after the first assistant response when `consent` is still `"pending"`. It will not appear in subsequent messages.
+> **Removed in v0.5.2.** Consent is now handled exclusively at session creation via the `consent_request` and `post_consent` fields in the `POST /api/session` response. The backend no longer emits `consent_request` as a structured message during the conversation. See [Section 4](#4-session-initiation) and [Section 10](#10-gdpr-consent).
 
 ### Type: `conversation_end`
 
@@ -888,7 +862,7 @@ X-RateLimit-Reset: 1709042400
 3. **After consent — accepted**: The frontend renders `post_consent.accepted` as Justec's next message and enables chat input. The conversation begins.
 4. **After consent — declined**: The frontend renders `post_consent.declined` as Justec's final message. **Chat input stays disabled.** The site relies on third-party services (Google Fonts, Cloudflare) that require consent — without it, the visitor cannot use the site. The message is a polite closure.
 
-> **Fallback**: If the frontend does not handle `consent_request` at session creation, the backend will still emit it as a `consent_request` structured message after the first assistant response (same as v0.4.0 behavior). This fallback is for backward compatibility and will be removed in a future version.
+> **Note**: Consent is handled exclusively at session creation. The backend does **not** emit a `consent_request` structured message during the conversation. The frontend must render the consent banner from the session creation response before enabling chat.
 
 ### `POST /api/session/:id/consent`
 
@@ -1404,7 +1378,6 @@ Complete catalog of all Server-Sent Events emitted by the message endpoint.
 | `payment_request` | Justec requests booking deposit (tool call) | [Section 8](#type-payment_request) |
 | `phone_request` | Justec asks for phone number (tool call) | [Section 8](#type-phone_request) |
 | `booking_confirmed` | Booking completed — direct or post-payment (tool call / webhook) | [Section 8](#type-booking_confirmed) |
-| `consent_request` | After first assistant response if consent pending (automatic) | [Section 8](#type-consent_request) |
 | `conversation_end` | Session terminated by security or budget exhaustion (automatic) | [Section 8](#type-conversation_end) |
 
 ### Event Ordering (Typical Message)
@@ -1418,15 +1391,14 @@ Complete catalog of all Server-Sent Events emitted by the message endpoint.
 6. event: token                   (LLM continues after tool calls)
 7. ...
 8. event: message_complete
-9. event: structured_message      (0 or 1, consent_request — only after first message)
-10. event: budget_exhausted        (0 or 1, if budget consumed)
-11. event: structured_message      (0 or 1, conversation_end — if budget exhausted)
-12. event: budget_warning          (0 or 1, if approaching limit — mutually exclusive with exhausted)
-13. event: tier_change             (0 or 1, if score threshold crossed)
-14. event: stream_end              (ALWAYS last — frontend stops reading here)
+9. event: budget_exhausted        (0 or 1, if budget consumed)
+10. event: structured_message      (0 or 1, conversation_end — if budget exhausted)
+11. event: budget_warning          (0 or 1, if approaching limit — mutually exclusive with exhausted)
+12. event: tier_change             (0 or 1, if score threshold crossed)
+13. event: stream_end              (ALWAYS last — frontend stops reading here)
 ```
 
-> **Note:** Tool-triggered `structured_message` events (calendar_slots, phone_request, payment_request, booking_confirmed) appear mid-stream between token events. Metadata `structured_message` events (consent_request, conversation_end) appear after `message_complete`.
+> **Note:** Tool-triggered `structured_message` events (calendar_slots, phone_request, payment_request, booking_confirmed) appear mid-stream between token events. Metadata `structured_message` events (`conversation_end`) appear after `message_complete`.
 
 **Guaranteed:** `stream_end` is ALWAYS emitted, even on errors or termination. The sequence is always: `processing` → [content] → `stream_end`. The frontend can rely on `stream_end` to know when to re-enable the input field and stop the reader.
 
@@ -1675,7 +1647,13 @@ disableChatInput(); // Block input until consent is resolved
 // 3. On consent response
 async function handleConsent(accepted: boolean) {
   await respondConsent(accepted);
-  enableChatInput(); // Unblock input after consent
+  if (accepted) {
+    displayMessage('justec', session.post_consent.accepted);
+    enableChatInput();
+  } else {
+    displayMessage('justec', session.post_consent.declined);
+    // Chat stays disabled — site requires consent for third-party services
+  }
 }
 
 // 4. On visitor text message
