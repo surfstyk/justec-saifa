@@ -76,9 +76,9 @@ const DEFAULTS: AppConfig = {
     chat_id: '1465455370',
   },
   greetings: {
-    en: "Hello, welcome to Surfstyk Limited. I'm Justec, Hendrik's personal assistant. How can I help you today?",
-    de: "Guten Tag und willkommen bei Surfstyk Limited. Ich bin Justec, Hendriks pers\u00f6nliche Assistentin. Wie kann ich Ihnen heute behilflich sein?",
-    pt: "Ol\u00e1, bem-vindo \u00e0 Surfstyk LDA. Sou a Justec, assistente pessoal do Hendrik. Como posso ajud\u00e1-lo hoje?",
+    en: "Welcome to Surfstyk Limited \u2014 I'm Justec, Hendrik's personal assistant. Before we get started, a quick formality:",
+    de: "Willkommen bei Surfstyk Limited \u2014 ich bin Justec, Hendriks pers\u00f6nliche Assistentin. Bevor wir loslegen, eine kurze Formalit\u00e4t:",
+    pt: "Bem-vindo \u00e0 Surfstyk LDA \u2014 sou a Justec, assistente pessoal do Hendrik. Antes de come\u00e7armos, uma breve formalidade:",
   },
   consent_messages: {
     en: {
