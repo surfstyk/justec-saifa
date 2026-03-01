@@ -12,7 +12,7 @@ const DEFAULTS: AppConfig = {
     owner: 'Hendrik Bondzio',
     timezone: 'Europe/Lisbon',
     languages: ['en', 'de', 'pt'],
-    phone: '+351 XXX XXX XXX',
+    phone: '+351 937 809 708',
     website: 'https://surfstyk.com',
     cors_origins: ['https://surfstyk.com', 'https://www.surfstyk.com'],
     location: 'Ericeira, Portugal',
