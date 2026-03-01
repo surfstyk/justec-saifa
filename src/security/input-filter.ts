@@ -23,8 +23,10 @@ const INJECTION_PATTERNS = [
 
 // Profanity patterns (basic coverage for en/de/pt)
 const PROFANITY_PATTERNS = [
-  // English
-  /\b(fuck|shit|ass|bitch|damn|cunt|dick|bastard|whore|slut)\w*\b/i,
+  // English — "ass" and "dick" split out to avoid PT/DE false positives
+  /\b(fuck|shit|bitch|damn|cunt|bastard|whore|slut)\w*\b/i,
+  /\bass(hole|hat|wipe|es)?\b/i,   // standalone or compounds — avoids PT "assunto", "assim"
+  /\bdick(head|s)?\b/i,            // standalone or compounds — avoids DE "dicker" (thick)
   // German
   /\b(scheiße|scheisse|arschloch|hurensohn|wichser|fotze|fick)\w*\b/i,
   // Portuguese
@@ -33,9 +35,14 @@ const PROFANITY_PATTERNS = [
 
 // Hostile language patterns
 const HOSTILITY_PATTERNS = [
-  /\b(kill|murder|die|death\s+threat|bomb)\b/i,
+  // English — "die" removed (false-positives on German article "die" = the)
+  /\b(kill|murder|death\s+threat|bomb)\b/i,
   /\bi\s+(will|want\s+to)\s+(hurt|harm|destroy|attack)/i,
   /\byou\s+(suck|are\s+(?:stupid|useless|garbage|trash))/i,
+  // German
+  /\b(umbringen|töten|morddrohung|bombe)\b/i,
+  // Portuguese
+  /\b(matar|assassinar|ameaça\s+de\s+morte|bomba)\b/i,
 ];
 
 const MAX_MESSAGE_LENGTH = 2000;
