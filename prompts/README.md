@@ -45,7 +45,7 @@ All files use double-brace variables for identity-specific values. These are res
 | `{{location}}` | `client.location` | Ericeira, Portugal |
 | `{{services_name}}` | `services.name` | Strategy Session |
 | `{{duration_display}}` | `services.duration_display` | 60-minute |
-| `{{deposit_display}}` | `payment.deposit_display` | 50 EUR |
+| `{{deposit_display}}` | `payment.deposit_display` | 80 EUR |
 | `{{contact_channel}}` | `persona.contact_channel` | WhatsApp |
 | `{{system_name}}` | `persona.system_name` | Justec Virtual Front Desk |
 | `{{currency_symbol}}` | `payment.currency_symbol` | € |
