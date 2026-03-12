@@ -12,6 +12,7 @@ const TOOL_NAMES = [
   'book_appointment',
   'request_phone',
   'request_payment',
+  'present_product',
 ];
 
 /**
@@ -27,7 +28,26 @@ const PREAMBLE_PATTERNS = [
   'function call:',
 ];
 
-type Mode = 'passthrough' | 'xml' | 'fn_call' | 'line';
+/**
+ * Internal field names that indicate a raw JSON block leak of signal/qualification data.
+ * When a `{` is followed (within 200 chars) by one of these, the entire JSON block is stripped.
+ */
+const JSON_BLOCK_MARKERS = [
+  'conversation_state',
+  'buying_signals',
+  'disqualification_signals',
+  'qualification',
+  'problem_specificity',
+  'engagement_depth',
+  'authority_level',
+  'budget_indicator',
+  'need_alignment',
+  'timeline_urgency',
+  'recommended_action',
+  'visitor_info',
+];
+
+type Mode = 'passthrough' | 'xml' | 'fn_call' | 'line' | 'json_block';
 
 /**
  * Streaming sanitizer that strips leaked tool invocations from Gemini output.
@@ -94,11 +114,16 @@ export class ToolCallSanitizer {
       this.buffer = remaining;
       this.parenDepth = 0;
 
-      // For fn_call, count opening paren(s) already in buffer
+      // For fn_call/json_block, count opening delimiters already in buffer
       if (match.mode === 'fn_call') {
         for (const ch of remaining) {
           if (ch === '(') this.parenDepth++;
           else if (ch === ')') this.parenDepth--;
+        }
+      } else if (match.mode === 'json_block') {
+        for (const ch of remaining) {
+          if (ch === '{') this.parenDepth++;
+          else if (ch === '}') this.parenDepth--;
         }
       }
 
@@ -157,6 +182,15 @@ export class ToolCallSanitizer {
         this.mode = 'passthrough';
         this.parenDepth = 0;
         if (after.length > 0) out += this.handlePassThrough(after);
+      } else if (this.mode === 'json_block') {
+        const resolved = this.advanceParenDepth();
+        if (resolved === -1) break;
+        const after = this.buffer.slice(resolved + 1);
+        console.warn(`[tool-call-sanitizer] Stripped JSON block (${resolved + 1} chars)`);
+        this.buffer = '';
+        this.mode = 'passthrough';
+        this.parenDepth = 0;
+        if (after.length > 0) out += this.handlePassThrough(after);
       } else if (this.mode === 'line') {
         const nlIdx = this.buffer.indexOf('\n');
         if (nlIdx === -1) break; // wait for newline
@@ -179,10 +213,12 @@ export class ToolCallSanitizer {
    * from multiple chunks with interleaved counting.
    */
   private advanceParenDepth(): number {
+    const open = this.mode === 'json_block' ? '{' : '(';
+    const close = this.mode === 'json_block' ? '}' : ')';
     let depth = 0;
     for (let i = 0; i < this.buffer.length; i++) {
-      if (this.buffer[i] === '(') depth++;
-      else if (this.buffer[i] === ')') {
+      if (this.buffer[i] === open) depth++;
+      else if (this.buffer[i] === close) {
         depth--;
         if (depth === 0) return i;
       }
@@ -220,6 +256,23 @@ export class ToolCallSanitizer {
       }
     }
 
+    // 4. JSON blocks containing internal field names (e.g. raw signal data dumps)
+    //    Look for `{` followed by a marker within 200 chars
+    let searchFrom = 0;
+    while (searchFrom < text.length) {
+      const braceIdx = text.indexOf('{', searchFrom);
+      if (braceIdx === -1 || (best && braceIdx >= best.index)) break;
+      const window = text.slice(braceIdx, braceIdx + 200);
+      for (const marker of JSON_BLOCK_MARKERS) {
+        if (window.includes(`"${marker}"`) || window.includes(`'${marker}'`)) {
+          best = { index: braceIdx, mode: 'json_block' };
+          break;
+        }
+      }
+      if (best?.mode === 'json_block' && best.index === braceIdx) break;
+      searchFrom = braceIdx + 1;
+    }
+
     return best;
   }
 
@@ -241,6 +294,30 @@ export class ToolCallSanitizer {
     // Check partial match against preamble patterns
     for (const preamble of PREAMBLE_PATTERNS) {
       maxHold = Math.max(maxHold, this.partialSuffixMatchCI(text, preamble));
+    }
+
+    // Check for trailing `{` that could be the start of a JSON block with internal fields.
+    // Hold back `{ ...` (up to 200 chars) if it contains `{` but we haven't seen a marker yet
+    // — the marker might arrive in the next chunk.
+    if (maxHold === 0) {
+      const lastBrace = text.lastIndexOf('{');
+      if (lastBrace !== -1) {
+        const tail = text.slice(lastBrace);
+        // Only hold back if the tail is short enough that a marker could still arrive
+        if (tail.length < 200) {
+          // Check if any marker partially matches what we have so far
+          const hasPartialMarker = JSON_BLOCK_MARKERS.some(m => {
+            const pattern = `"${m}"`;
+            // Full marker present → findEarliestTrigger would have caught it
+            if (tail.includes(pattern)) return true;
+            // Partial marker at the end of tail
+            return this.partialSuffixMatch(tail, pattern) > 0;
+          });
+          if (hasPartialMarker) {
+            maxHold = tail.length;
+          }
+        }
+      }
     }
 
     return maxHold;

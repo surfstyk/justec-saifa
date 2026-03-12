@@ -31,6 +31,8 @@ const LEAKAGE_PATTERNS = [
   /engagement_depth/,
   /buying_signals.*disqualification_signals/,
   /recommended_action.*continue_discovery/,
+  /"conversation_state"\s*:/,
+  /"visitor_info"\s*:\s*\{/,
   // Preamble lines before leaked tool calls
   /Tagged\s+calls:/i,
 ];

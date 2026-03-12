@@ -96,6 +96,23 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
     }
   }
 
+  // Extract phone number from text if not already captured via action
+  // (handles tier-boundary case where lobby asked for phone in plain text)
+  if (body.text && !session.metadata?.phone) {
+    const phoneMatch = body.text.match(/\+?\d[\d\s\-().]{7,}\d/);
+    if (phoneMatch) {
+      const cleaned = phoneMatch[0].replace(/[\s\-().]/g, '');
+      if (cleaned.length >= 8 && cleaned.length <= 16) {
+        console.log(`[message] Phone extracted from text: ${cleaned}`);
+        session.metadata = session.metadata || {};
+        session.metadata.phone = cleaned;
+        if (session.trello_card_id) {
+          moveToPhoneCaptured(session).catch(e => console.error('[trello] Phone captured move failed:', e));
+        }
+      }
+    }
+  }
+
   // 2. Input filter (on text messages)
   let threatLevel: 0 | 1 | 2 | 3 = 0;
   if (body.text) {
