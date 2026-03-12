@@ -1,8 +1,8 @@
 # SSE & Structured Messages — Frontend/Middleware Contract
 
-**Version:** 1.1.0
-**Date:** 2026-02-26
-**Status:** Active — aligns with deployed middleware (Phases 1–10)
+**Version:** 1.2.0
+**Date:** 2026-03-12
+**Status:** Active — aligns with deployed middleware
 
 ---
 
@@ -10,6 +10,7 @@
 
 | Version | Date       | Changes                                                        |
 |---------|------------|----------------------------------------------------------------|
+| 1.2.0   | 2026-03-12 | Added `product_link` structured message type for self-service product referrals (MemberMagix, KongQuant). Display-only — no action flows back. Available in both lobby and meeting room tiers via `present_product` tool. |
 | 1.1.0   | 2026-02-26 | Added `payment_request` structured message (Phase 10). Updated booking flow: payment required before calendar event creation. Added payment fields to state endpoint. |
 | 1.0.0   | 2026-02-26 | Initial contract. Covers core SSE lifecycle, 3 structured message types (calendar_slots, phone_request, booking_confirmed), 5 action types, budget events. |
 
@@ -218,9 +219,9 @@ Display error inline in chat. Codes: `llm_error`, `internal_error`.
 {
   "type": "payment_request",
   "payload": {
-    "amount": 5000,
+    "amount": 8000,
     "currency": "eur",
-    "display_amount": "€50.00",
+    "display_amount": "€80.00",
     "description": "Strategy session deposit — credited toward your first engagement",
     "stripe_checkout_url": "https://checkout.stripe.com/c/pay/cs_live_...",
     "paypal_approve_url": "https://www.paypal.com/checkoutnow?token=...",
@@ -277,6 +278,48 @@ Only render buttons for non-null URLs. Both links open Stripe/PayPal hosted chec
 ```
 
 **Rendering:** Confirmation card with checkmark and booking details. **No action required.**
+
+### 3.5 `product_link` — Product Referral CTA
+
+**Trigger:** LLM calls `present_product` tool (available in both lobby and meeting room tiers).
+
+**Payload:**
+```json
+{
+  "type": "product_link",
+  "payload": {
+    "product": "kongquant",
+    "links": [
+      {
+        "url": "https://kongquant.com/?utm_source=justec&utm_medium=chat&utm_campaign=referral&utm_content=product-link",
+        "label": { "en": "Visit KongQuant", "de": "KongQuant besuchen", "pt": "Visitar KongQuant" },
+        "primary": true
+      },
+      {
+        "url": "https://x.com/kongquant",
+        "label": { "en": "Follow on X", "de": "Auf X folgen", "pt": "Seguir no X" },
+        "primary": false
+      },
+      {
+        "url": "https://tiktok.com/@kongquant",
+        "label": { "en": "Follow on TikTok", "de": "Auf TikTok folgen", "pt": "Seguir no TikTok" },
+        "primary": false
+      }
+    ],
+    "language": "en"
+  }
+}
+```
+
+**Field notes:**
+- `product` — slug identifying the product (`"membermagix"` or `"kongquant"`)
+- `links[].primary` — `true` renders as a prominent CTA button, `false` renders as secondary text link
+- `links[].label` — i18n labels keyed by language code; fall back to `label.en` if visitor language unavailable
+- All links open in a new tab (`target="_blank"`, `rel="noopener noreferrer"`)
+
+**Rendering:** Product name as header (mapped from slug → display name). Primary links as full-width CTA buttons. Secondary links as small text links separated by `·`.
+
+**No action required.** Display-only — no action flows back to the middleware.
 
 ---
 

@@ -144,4 +144,4 @@ Behind it sits Hendrik's seven years of involvement in investing and trading acr
 - [x] Distill this document into Justec's knowledge base bootstrap
 - [x] Update strategy session fee from €50 to €80 in config and prompts
 - [x] Update checkout amount to €80
-- [ ] Implement MemberMagix and KongQuant referral links as presentable buttons/CTAs in chat UI (frontend: `product_link` structured message type spec sent to frontend team; backend: `present_product` tool pending frontend confirmation of payload shape)
+- [x] Implement MemberMagix and KongQuant referral links as presentable buttons/CTAs in chat UI

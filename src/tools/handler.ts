@@ -1,6 +1,7 @@
 import { handleCheckAvailability, handleBookAppointment } from './calendar-tools.js';
 import { handleRequestPhone } from './phone-tools.js';
 import { handleRequestPayment } from './payment-tools.js';
+import { handlePresentProduct } from './product-tools.js';
 import { handleReportSignals } from './signal-tool.js';
 import type { Session } from '../types.js';
 import type { ToolCallResult } from './calendar-tools.js';
@@ -26,6 +27,9 @@ export async function handleToolCall(
 
     case 'request_payment':
       return handleRequestPayment(session, args);
+
+    case 'present_product':
+      return handlePresentProduct(session, args);
 
     case 'report_signals':
       return handleReportSignals(args);

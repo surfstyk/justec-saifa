@@ -1,5 +1,6 @@
 import { buildSystemPrompt } from './loader.js';
 import { SIGNAL_TOOL } from '../tools/signal-tool.js';
+import { PRESENT_PRODUCT_TOOL } from '../tools/product-tools.js';
 import { getConfig } from '../config.js';
 import type { Session, LLMMessage, ToolDefinition } from '../types.js';
 
@@ -85,7 +86,7 @@ export function buildMeetingRoomPrompt(session: Session): {
     }));
 
   // Gate booking tools based on session progress — enforce sequential booking flow
-  const tools: ToolDefinition[] = [SIGNAL_TOOL];
+  const tools: ToolDefinition[] = [SIGNAL_TOOL, PRESENT_PRODUCT_TOOL];
 
   if (session.payment_status !== 'completed') {
     const hasPhone = !!session.metadata?.phone;

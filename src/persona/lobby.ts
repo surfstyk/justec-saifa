@@ -1,5 +1,6 @@
 import { buildSystemPrompt } from './loader.js';
 import { SIGNAL_TOOL } from '../tools/signal-tool.js';
+import { PRESENT_PRODUCT_TOOL } from '../tools/product-tools.js';
 import type { Session, LLMMessage, ToolDefinition } from '../types.js';
 
 const LOBBY_HISTORY_WINDOW = 5; // Last 5 exchanges (10 messages)
@@ -24,5 +25,5 @@ export function buildLobbyPrompt(session: Session): {
       content: msg.content!,
     }));
 
-  return { system, messages, tools: [SIGNAL_TOOL] };
+  return { system, messages, tools: [SIGNAL_TOOL, PRESENT_PRODUCT_TOOL] };
 }
