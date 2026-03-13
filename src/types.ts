@@ -72,6 +72,8 @@ export interface Message {
   structured: StructuredMessage[];
   timestamp: string;
   tokens?: number;
+  tokens_input?: number;
+  tokens_output?: number;
   metadata?: Record<string, unknown>;
 }
 
@@ -163,6 +165,7 @@ export type LLMEvent =
 export interface TokenUsage {
   input_tokens: number;
   output_tokens: number;
+  estimated?: boolean;
 }
 
 // ── Qualification Signals (from LLM) ─────────────────────

@@ -23,13 +23,15 @@ export async function budgetConsume(ctx: PipelineContext): Promise<StageResult> 
   const config = getConfig();
   const tokenCount = ctx.tokenUsage.input + ctx.tokenUsage.output;
 
-  // Store assistant message in history
+  // Store assistant message in history with actual token breakdown
   const assistantMessage: Message = {
     role: config.persona.assistant_role,
     content: ctx.fullResponse,
     structured: ctx.structuredMessages,
     timestamp: new Date().toISOString(),
     tokens: tokenCount,
+    tokens_input: ctx.tokenUsage.input,
+    tokens_output: ctx.tokenUsage.output,
   };
   session.history.push(assistantMessage);
 

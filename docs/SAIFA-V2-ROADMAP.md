@@ -784,7 +784,9 @@ Uses `MockLLMAdapter` to simulate full message flows.
 
 ---
 
-## Phase 4: Token Accuracy
+## Phase 4: Token Accuracy ✅
+
+**Status**: Complete (v2.4.0) — actual Gemini API token counts replace char/4 estimation.
 
 **Goal**: Replace `charCount / 4` estimation with actual API token counts.
 
@@ -928,3 +930,4 @@ _Updated after each phase ships._
 | 1 (Dashboard) | 2.1.0 | 2026-03-13 | 9010ea7–9d88142 | 7 screens, stats counter, auth, SQLite queries, session store extensions |
 | 2 (Pipeline) | 2.2.0 | 2026-03-13 | 68dcc10 | 8-stage pipeline, thin route handler, zero behavioral changes |
 | 3 (Tests) | 2.3.0 | 2026-03-13 | 35a2b9a–fc6bb6a | 191 tests, 10 suites, 20 files, Vitest + MockLLMAdapter, ~500ms runtime |
+| 4 (Token Accuracy) | 2.4.0 | 2026-03-13 | — | Actual Gemini usageMetadata, char/4 fallback, per-message input/output breakdown |

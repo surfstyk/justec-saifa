@@ -118,8 +118,14 @@ export class GeminiAdapter implements LLMAdapter {
       // Gemini 3 Flash puts thoughtSignature on the first functionCall part only,
       // but requires it on ALL when replaying. Track across the entire stream.
       let responseThoughtSig: string | undefined;
+      // Capture usageMetadata from the final streaming chunk
+      let lastUsageMeta: { promptTokenCount?: number; candidatesTokenCount?: number } | undefined;
 
       for await (const chunk of response) {
+        // Capture usageMetadata (populated on final chunk)
+        const chunkMeta = (chunk as unknown as { usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } }).usageMetadata;
+        if (chunkMeta) lastUsageMeta = chunkMeta;
+
         // Check for function call parts
         const candidates = (chunk as unknown as Record<string, unknown>).candidates as Array<{
           content?: { parts?: Array<Record<string, unknown>> };
@@ -159,12 +165,22 @@ export class GeminiAdapter implements LLMAdapter {
         }
       }
 
-      // Estimate token usage
-      const inputChars = request.system.length + request.messages.reduce((acc, m) => acc + (m.content?.length ?? 0), 0);
-      const usage: TokenUsage = {
-        input_tokens: Math.ceil(inputChars / 4),
-        output_tokens: Math.ceil(totalText.length / 4),
-      };
+      // Use actual token counts from Gemini usageMetadata (final chunk)
+      let usage: TokenUsage;
+      if (lastUsageMeta?.promptTokenCount != null && lastUsageMeta?.candidatesTokenCount != null) {
+        usage = {
+          input_tokens: lastUsageMeta.promptTokenCount,
+          output_tokens: lastUsageMeta.candidatesTokenCount,
+        };
+      } else {
+        // Fallback to char/4 estimation if API doesn't return usage
+        const inputChars = request.system.length + request.messages.reduce((acc, m) => acc + (m.content?.length ?? 0), 0);
+        usage = {
+          input_tokens: Math.ceil(inputChars / 4),
+          output_tokens: Math.ceil(totalText.length / 4),
+          estimated: true,
+        };
+      }
 
       yield { type: 'done', usage };
     } catch (err) {

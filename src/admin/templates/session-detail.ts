@@ -270,7 +270,7 @@ function renderTimeline(messages: Message[]): string {
 
     return `
       <div class="timeline-entry ${cssClass}">
-        <div class="timeline-meta">${label} &middot; ${time}${msg.tokens ? ` &middot; ${msg.tokens} tokens` : ''}</div>
+        <div class="timeline-meta">${label} &middot; ${time}${msg.tokens ? ` &middot; ${msg.tokens} tokens${msg.tokens_input ? ` (in: ${msg.tokens_input}, out: ${msg.tokens_output ?? 0})` : ''}` : ''}</div>
         <div class="timeline-content">${content}</div>
       </div>`;
   }).join('');

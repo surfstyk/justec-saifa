@@ -116,12 +116,12 @@ Token consumption is tracked per session. Budget tier is determined by session s
 | Qualified | 1,500,000 | tier = meeting_room |
 | Post-booking | 3,000,000 | payment_status = completed |
 
-**How tokens are counted** (current implementation):
-- Each LLM API call estimates: `input_tokens = (system_prompt + all_messages) / 4`, `output_tokens = response_text / 4`
-- Both input and output are summed into `session.tokens_used`
-- The `report_signals` tool pattern causes **2 API calls per turn** (signal call + text continuation), so the system prompt (~16-19KB) is counted twice per visitor message
-
-**Known issue**: The system prompt dominates token counting (~4,000-4,750 tokens per call). At 2 calls per turn, that's ~8,000-9,500 tokens/turn of fixed overhead. Over 7-8 turns, the system prompt alone can exhaust the `engaged` budget (60,000) — independent of actual conversation content. This makes the budget effectively a turn counter rather than a meaningful token limit.
+**How tokens are counted** (v2.4.0+):
+- Actual token counts from the Gemini API `usageMetadata` (`promptTokenCount`, `candidatesTokenCount`) are used when available
+- Falls back to `char / 4` estimation only if the API does not return usage metadata
+- Both input and output tokens are summed into `session.tokens_used`
+- Per-message breakdown (input/output) is stored on each assistant message in session history
+- The `report_signals` tool pattern causes **2 API calls per turn** (signal call + text continuation), so the system prompt is counted twice per visitor message
 
 ### Budget Exhaustion Flow
 When `session.tokens_used >= budget`:
