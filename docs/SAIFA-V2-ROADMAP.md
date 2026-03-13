@@ -6,6 +6,16 @@
 
 ---
 
+## How to Use This Document
+
+This roadmap is the single source of truth for SAIFA v2 development. Each phase is designed to be executed in a **standalone session** — a fresh context window reads this document, the codebase, and CLAUDE.md, then implements the phase without needing prior conversation history.
+
+**For each phase session**: Use the kickoff prompt provided at the end of this document. The prompt points the session at this spec and scopes the work.
+
+**After each phase**: Bump the version in package.json + health.ts, commit, push, and update the "Completed" section at the bottom of this document.
+
+---
+
 ## Context
 
 SAIFA v1 shipped in two weeks (Feb 27 – Mar 12): 36 commits, ~6,300 lines of TypeScript, a working qualification funnel, booking flow, and five integrations. The system works — it qualifies leads, books sessions, processes payments.
@@ -19,6 +29,9 @@ v2.0 addresses this in four phases, ordered by dependency and value.
 ## Phase 1: Admin Dashboard
 
 **Goal**: A single place for the operator to see what SAIFA is doing, how it's performing, and how it's configured.
+
+**Version**: 2.1.0
+**Prerequisite**: None (builds on v2.0.0 baseline)
 
 ### Architecture
 
@@ -151,6 +164,9 @@ Aggregate metrics computed from SQLite + in-memory counters:
 
 **Goal**: Extract the message processing monolith (`src/routes/message.ts`, 521 lines) into a testable, instrumentable pipeline.
 
+**Version**: 2.2.0
+**Prerequisite**: Phase 1 complete (dashboard provides visibility during refactor)
+
 ### Current State
 
 `message.ts` does everything sequentially in one function: validation → input filtering → guard evaluation → budget check → prompt assembly → LLM streaming → tool dispatch → output filtering → scoring → tier escalation → token tracking → SSE emission. It works but is untestable and opaque.
@@ -173,13 +189,147 @@ src/
     types.ts            — PipelineContext, StageResult interfaces
 ```
 
-Each stage:
-- Receives a `PipelineContext` (session, request, accumulated state)
-- Returns a `StageResult` (continue/halt + updated context)
-- Can emit telemetry events (for dashboard stats)
-- Is independently unit-testable
+### Core Types
 
-The route handler (`message.ts`) becomes thin: create context → run pipeline → handle SSE emission.
+```typescript
+// pipeline/types.ts
+
+interface PipelineContext {
+  // Immutable inputs
+  session: Session;
+  requestBody: { text?: string; action?: ActionPayload; behavioral_signals?: BehavioralSignals };
+  ipHash: string;
+  config: AppConfig;
+
+  // Accumulated state (mutable across stages)
+  processedText: string;              // After input filter / action translation
+  threatLevel: number;                // From input filter (0-3)
+  guardAction: GuardAction | null;    // From guard evaluation
+  guardRedirect: string | null;       // Injected system prompt addition
+  systemPrompt: string;               // Assembled prompt (from prompt-build stage)
+  messages: LLMMessage[];             // Conversation history for LLM
+  tools: ToolDefinition[];            // Available tools for this tier/state
+  fullResponse: string;               // Accumulated LLM text output
+  toolCalls: ToolCallRecord[];        // Tool calls executed this turn
+  structuredMessages: StructuredMessage[];  // Frontend widgets emitted
+  capturedSignals: QualificationSignals | null;  // From report_signals
+  tokenUsage: { input: number; output: number }; // From LLM done event
+
+  // SSE writer (passed through for streaming stage)
+  res: Response;
+  clientDisconnected: boolean;
+}
+
+type StageResult =
+  | { action: 'continue'; ctx: PipelineContext }
+  | { action: 'halt'; ctx: PipelineContext; reason: string }  // Stop pipeline, send stream_end
+  | { action: 'terminate'; ctx: PipelineContext; reason: string; message: string }  // Close session
+
+// Each stage is a pure-ish function:
+type PipelineStage = (ctx: PipelineContext) => Promise<StageResult>;
+```
+
+### Stage Contracts
+
+| Stage | Reads from ctx | Writes to ctx | Can halt? | Can emit SSE? |
+|-------|---------------|---------------|-----------|---------------|
+| **validate** | requestBody, ipHash | processedText | Yes (429 rate limit, 400 bad request) | No |
+| **security-in** | processedText, session | threatLevel, guardAction, guardRedirect | Yes (terminate/block) | Yes (session_terminated) |
+| **budget-check** | session | — | Yes (429 budget exhausted) | No |
+| **prompt-build** | session, config, guardRedirect | systemPrompt, messages, tools | No | No |
+| **llm-stream** | systemPrompt, messages, tools, res | fullResponse, toolCalls, structuredMessages, capturedSignals, tokenUsage | Yes (LLM error, client disconnect) | Yes (processing, tokens, structured_message) |
+| **security-out** | fullResponse | fullResponse (replaced if leak) | No (replaces text, continues) | No |
+| **score-update** | capturedSignals, session | session.scores, session.tier | No | Yes (tier_change) |
+| **budget-consume** | tokenUsage, session | session.tokens_used | Yes (budget_exhausted → terminate) | Yes (message_complete, budget_warning, budget_exhausted) |
+
+### Pipeline Orchestrator
+
+```typescript
+// pipeline/index.ts
+
+class MessagePipeline {
+  private stages: PipelineStage[] = [
+    validate,
+    securityIn,
+    budgetCheck,
+    promptBuild,
+    llmStream,
+    securityOut,
+    scoreUpdate,
+    budgetConsume,
+  ];
+
+  async run(ctx: PipelineContext): Promise<void> {
+    for (const stage of this.stages) {
+      const result = await stage(ctx);
+      ctx = result.ctx;
+
+      // Emit telemetry for dashboard stats counter
+      stats.recordStage(stage.name, result);
+
+      if (result.action === 'halt') {
+        break;
+      }
+      if (result.action === 'terminate') {
+        await closeSession(ctx.session.id, result.reason);
+        break;
+      }
+    }
+    // Final: update session + stream_end (unless already sent)
+  }
+}
+```
+
+### Route Handler (After Refactor)
+
+```typescript
+// routes/message.ts (thin orchestrator, ~40 lines)
+
+router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
+  if (isBlocked(req.session.ip_hash)) return res.status(403).json({ error: 'blocked' });
+
+  const ctx: PipelineContext = {
+    session: res.locals.session,
+    requestBody: req.body,
+    ipHash: res.locals.session.ip_hash,
+    config: getConfig(),
+    processedText: '',
+    threatLevel: 0,
+    guardAction: null,
+    guardRedirect: null,
+    systemPrompt: '',
+    messages: [],
+    tools: [],
+    fullResponse: '',
+    toolCalls: [],
+    structuredMessages: [],
+    capturedSignals: null,
+    tokenUsage: { input: 0, output: 0 },
+    res,
+    clientDisconnected: false,
+  };
+
+  res.on('close', () => { ctx.clientDisconnected = true; });
+  setupSSE(res, ctx.session.tier);
+
+  await pipeline.run(ctx);
+
+  if (!ctx.clientDisconnected && !res.writableEnded) {
+    writeStreamEnd(res);
+  }
+});
+```
+
+### Telemetry Hook for Dashboard
+
+Each stage emits to the stats counter (from Phase 1):
+```typescript
+stats.record('stage:validate', { duration_ms, result: 'continue' | 'halt' });
+stats.record('stage:llm_stream', { duration_ms, tokens_in, tokens_out, tool_calls: count });
+stats.record('stage:security_out', { leak_detected: boolean });
+```
+
+The dashboard's performance screen reads these counters for per-stage latency and error rates.
 
 ### Why Before Tests
 
@@ -187,17 +337,22 @@ You can't effectively unit-test a 521-line function. The refactor creates the se
 
 ### Migration Strategy
 
-1. Extract stages one at a time (validate first, then security, etc.)
-2. Each extraction is a standalone commit
-3. After each extraction: verify manually that the chat still works end-to-end
-4. Once all stages extracted: the route handler is just orchestration
-5. No behavioral changes — pure refactor
+1. Create `pipeline/types.ts` with PipelineContext and StageResult
+2. Extract stages one at a time, starting with `validate` (simplest, no SSE)
+3. Each extraction is a standalone commit
+4. After each extraction: `npm run build` + manual chat test to verify no behavioral change
+5. Once all stages extracted: replace message.ts body with pipeline orchestrator
+6. Final commit: delete dead code from old message.ts
+7. No behavioral changes — pure refactor
 
 ---
 
 ## Phase 3: Tests
 
 **Goal**: Comprehensive automated test coverage that catches the classes of bugs we've already encountered and prevents regressions. Tests are an ongoing investment — every bug fix, feature, and refactor should ship with tests.
+
+**Version**: 2.3.0
+**Prerequisite**: Phase 2 complete (pipeline stages exist as testable units)
 
 **Principle**: Every bug in the git history (15 fixes across 36 commits) represents a test we didn't have. The test suite below is designed to cover every one of those failure modes, plus edge cases discovered during the code audit.
 
@@ -631,6 +786,9 @@ Uses `MockLLMAdapter` to simulate full message flows.
 
 **Goal**: Replace `charCount / 4` estimation with actual API token counts.
 
+**Version**: 2.4.0
+**Prerequisite**: Phase 1 complete (dashboard displays token data), Phase 3 complete (tests cover budget module)
+
 ### Current State
 
 The Gemini adapter captures a `usage` object in the `done` event:
@@ -686,3 +844,82 @@ Each phase is independently deployable and valuable. The operator gets visibilit
 | 2.2.0 | Pipeline refactored |
 | 2.3.0 | Test suite in place |
 | 2.4.0 | Token accuracy |
+
+---
+
+## Session Kickoff Prompts
+
+Copy-paste the relevant prompt to start a fresh Claude Code session for each phase.
+
+### Phase 1 Kickoff
+
+```
+Read docs/SAIFA-V2-ROADMAP.md — Phase 1: Admin Dashboard. Read CLAUDE.md for project constraints. Then explore the existing source (especially src/routes/, src/session/, src/db/, src/security/, src/persona/loader.ts, and config/) to understand the data sources you'll need.
+
+Implement the admin dashboard as specified:
+- Server-rendered HTML at /admin/* behind basic auth
+- 7 screens: overview, active sessions, session detail, prompt viewer, config viewer, history, performance
+- In-memory stats counter for daily metrics
+- SQLite aggregate queries for historical data
+- Session store getAll() and getStats() methods
+- No new npm dependencies
+
+Build incrementally — start with auth middleware + layout + overview screen, verify it works, then add screens one by one. Commit after each working screen. Bump to v2.1.0 on final commit. Run `npm run build` after every change.
+```
+
+### Phase 2 Kickoff
+
+```
+Read docs/SAIFA-V2-ROADMAP.md — Phase 2: Pipeline Refactor. Read the full src/routes/message.ts to understand the current monolith. Read pipeline/types.ts spec in the roadmap for the target interfaces.
+
+Refactor the message route into a staged pipeline as specified:
+- Create src/pipeline/ with types.ts, index.ts, and 8 stage files
+- Each stage is a pure-ish function: (ctx: PipelineContext) => Promise<StageResult>
+- Extract one stage at a time, commit after each, verify build + manual test
+- Route handler becomes ~40 lines of orchestration
+- Add telemetry hooks for dashboard stats counter
+- Zero behavioral changes — pure refactor
+
+Start with types.ts and validate.ts (simplest stage), work through to budget-consume.ts. Final commit replaces message.ts body with pipeline.run(). Bump to v2.2.0.
+```
+
+### Phase 3 Kickoff
+
+```
+Read docs/SAIFA-V2-ROADMAP.md — Phase 3: Tests (full specification with 10 test suites, 150+ scenarios). Read the source files referenced in each test suite.
+
+Implement the test suite as specified:
+- Vitest, colocated *.test.ts files
+- Create MockLLMAdapter in src/__fixtures__/mock-adapter.ts
+- Create test fixtures for captured Gemini responses, multilingual corpuses, session objects
+- Implement suites in priority order: scoring → security → sanitizer → session/budget → prompts → tools → LLM adapter → calendar → pipeline integration → phone extraction
+- Each suite is a standalone commit
+- Run `npm test` after each suite to verify green
+
+Bump to v2.3.0 on final commit. Verify `npm test` passes all suites.
+```
+
+### Phase 4 Kickoff
+
+```
+Read docs/SAIFA-V2-ROADMAP.md — Phase 4: Token Accuracy. Read src/llm/gemini.ts (usage in done event), src/session/budget.ts (consume function), and src/pipeline/stages/budget-consume.ts.
+
+Replace char/4 estimation with actual Gemini API token counts:
+1. Pass usage from LLM done event through pipeline context to budget.consume()
+2. Store actual token counts on message records
+3. Update dashboard performance screen to show actual counts
+4. Update SESSION-ECONOMICS.md with real data
+5. Add tests for the budget module changes
+
+Bump to v2.4.0. Small, focused change.
+```
+
+---
+
+## Completed Phases
+
+_Updated after each phase ships._
+
+| Phase | Version | Date | Commits | Notes |
+|-------|---------|------|---------|-------|
+| 0 (Cleanup) | 2.0.0 | 2026-03-13 | 983ecd8, 2c7e9ef, bddfc47 | Archive stale docs, bump version, expand test spec |
