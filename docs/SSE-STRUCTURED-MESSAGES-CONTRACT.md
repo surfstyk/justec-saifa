@@ -1,7 +1,7 @@
 # SSE & Structured Messages — Frontend/Middleware Contract
 
-**Version:** 1.2.0
-**Date:** 2026-03-12
+**Version:** 1.3.1
+**Date:** 2026-03-13
 **Status:** Active — aligns with deployed middleware
 
 ---
@@ -10,6 +10,8 @@
 
 | Version | Date       | Changes                                                        |
 |---------|------------|----------------------------------------------------------------|
+| 1.3.1   | 2026-03-13 | Fixed Section 3.3: `payment_request` payload now shows actual `providers` nested structure (Stripe embedded checkout + PayPal SDK), not outdated redirect URLs. Fixed action matrix: replaced non-existent `connection_error` with actual SSE error codes. |
+| 1.3.0   | 2026-03-13 | Added Section 7: HTTP Error Responses — complete error contract with status codes, triggers, frontend implementation details, and action matrix. |
 | 1.2.0   | 2026-03-12 | Added `product_link` structured message type for self-service product referrals (MemberMagix, KongQuant). Display-only — no action flows back. Available in both lobby and meeting room tiers via `present_product` tool. |
 | 1.1.0   | 2026-02-26 | Added `payment_request` structured message (Phase 10). Updated booking flow: payment required before calendar event creation. Added payment fields to state endpoint. |
 | 1.0.0   | 2026-02-26 | Initial contract. Covers core SSE lifecycle, 3 structured message types (calendar_slots, phone_request, booking_confirmed), 5 action types, budget events. |
@@ -222,12 +224,21 @@ Display error inline in chat. Codes: `llm_error`, `internal_error`.
     "amount": 8000,
     "currency": "eur",
     "display_amount": "€80.00",
-    "description": "Strategy session deposit — credited toward your first engagement",
-    "stripe_checkout_url": "https://checkout.stripe.com/c/pay/cs_live_...",
-    "paypal_approve_url": "https://www.paypal.com/checkoutnow?token=...",
+    "description": "60-minute strategy session — credited toward your first engagement",
+    "providers": {
+      "stripe": {
+        "client_secret": "cs_live_secret_...",
+        "publishable_key": "pk_live_..."
+      },
+      "paypal": {
+        "approve_url": "https://www.paypal.com/checkoutnow?token=...",
+        "order_id": "ORDER-ABC123",
+        "client_id": "AaBbCc..."
+      }
+    },
     "booking_summary": {
-      "date": "Thursday, 27 February at 14:00 (Lisbon)",
-      "duration": "60 minutes",
+      "date": "Thursday 27 February, 14:00",
+      "duration": "60-minute",
       "with": "Hendrik Bondzio"
     }
   }
@@ -235,22 +246,22 @@ Display error inline in chat. Codes: `llm_error`, `internal_error`.
 ```
 
 **Field notes:**
-- `stripe_checkout_url` — may be `null` if Stripe session creation failed
-- `paypal_approve_url` — may be `null` if PayPal is not configured or order creation failed
-- At least one URL will always be present (if both fail, no structured message is emitted)
+- `providers` — object with one or both keys (`stripe`, `paypal`). If a provider fails to initialize, its key is absent. If both fail, no structured message is emitted.
+- `providers.stripe.client_secret` — Stripe Checkout Session client secret for **embedded checkout** (Stripe.js `initEmbeddedCheckout`). This is NOT a redirect URL.
+- `providers.stripe.publishable_key` — Stripe publishable key needed to initialize Stripe.js.
+- `providers.paypal.approve_url` — PayPal approval URL. Opens in new tab or PayPal SDK popup.
+- `providers.paypal.order_id` — PayPal order ID for SDK integration.
+- `providers.paypal.client_id` — PayPal client ID for SDK initialization.
 
-**Rendering:** Payment card showing the booking summary and deposit amount, with up to two buttons:
-- "Pay with Card" → opens `stripe_checkout_url` in a new tab/window
-- "Pay with PayPal" → opens `paypal_approve_url` in a new tab/window
+**Rendering:** Payment card showing the booking summary and deposit amount. Render a button for each provider present in `providers`:
+- **Stripe:** "Pay with Card" — initialize Stripe.js embedded checkout using `client_secret` and `publishable_key`
+- **PayPal:** "Pay with PayPal" — use PayPal SDK with `client_id` and `order_id`, or redirect to `approve_url`
 
-Only render buttons for non-null URLs. Both links open Stripe/PayPal hosted checkout pages — no card details are collected on our site.
+**After payment:** Payment confirmation is handled by webhooks from Stripe/PayPal to the middleware, which creates the calendar event and moves the Trello card automatically. The frontend should:
+1. Poll `GET /api/session/:id/state` to confirm `payment.status === "completed"`
+2. On confirmation, fetch `GET /api/session/:id/history` to display the booking confirmation message that the webhook injected into the conversation
 
-**After payment:** The visitor completes payment on the external page and is redirected back to `https://surfstyk.com/?payment=success` (or `?payment=cancelled`). The frontend should:
-1. Detect `?payment=success` in the URL on page load
-2. Poll `GET /api/session/:id/state` to confirm `payment.status === "completed"`
-3. Show a confirmation state in the chat
-
-**No action required from the frontend to the middleware** — the payment confirmation is handled entirely by webhooks from Stripe/PayPal to the middleware, which then creates the calendar event and moves the Trello card automatically.
+**No action required from the frontend to the middleware** — the payment lifecycle is fully webhook-driven.
 
 ### 3.4 `booking_confirmed` — Confirmation Card
 
@@ -419,7 +430,125 @@ The following types from the original API spec v0.2.0 have been **dropped**:
 
 ---
 
-## 7. Session Endpoints Reference
+## 7. HTTP Error Responses
+
+All HTTP errors return JSON:
+
+```json
+{
+  "error": "error_code",
+  "message": "Human-readable message",
+  "retry_after_seconds": 60
+}
+```
+
+`retry_after_seconds` is only present on `429` responses.
+
+### 400 — Bad Request (`invalid_request`)
+
+| Trigger | Endpoints |
+|---|---|
+| Invalid or missing session ID (not UUID v4) | All `/api/session/:id/*` routes |
+| Content-Type is not `application/json` or `text/plain` | All POST routes |
+| Message contains neither `text` nor `action` | `POST /api/session/:id/message` |
+| Message contains both `text` and `action` | `POST /api/session/:id/message` |
+| Consent field is not a boolean | `POST /api/session/:id/consent` |
+| Language is not `en`, `de`, or `pt` | `POST /api/session/:id/language` |
+
+**Frontend implementation:** Shows localized message — EN: "Something went wrong. Please refresh the page." Input remains enabled. No retry or "New conversation" button. Typically indicates a frontend bug.
+
+### 403 — Forbidden
+
+**`blocked`** — Visitor's IP has been blocklisted after repeated security violations (guard level 4).
+
+```json
+{ "error": "blocked", "message": "Access denied." }
+```
+
+Endpoints: `POST /api/session`, `POST /api/session/:id/message`
+
+**Frontend implementation:** The entire chat interface (MessageList + ChatInput) is hidden. Only a centered "Access denied." message is shown. No retry, no "New conversation" button. Same behavior when an SSE `session_terminated` event arrives with `guard_level >= 4`.
+
+**`verification_failed`** — Cloudflare Turnstile token missing, invalid, or expired.
+
+```json
+{ "error": "verification_failed", "message": "We couldn't verify your request. Please refresh and try again." }
+```
+
+Endpoints: `POST /api/session`
+
+**Frontend implementation:** Shows localized message — EN: "Verification failed. Please refresh the page." with a "Try again" button. Input remains enabled. Retry clears the error and re-triggers session creation (which re-requests a Turnstile token).
+
+### 404 — Session Not Found (`session_not_found`)
+
+```json
+{ "error": "session_not_found", "message": "Session not found or expired" }
+```
+
+Endpoints: All `/api/session/:id/*` routes
+
+**Triggers:**
+- Session expired (default TTL: 60 minutes of inactivity)
+- Server was restarted (sessions are in-memory)
+- Session ID doesn't exist
+
+**Frontend implementation:** Shows localized message — EN: "Your session has ended. Would you like to start a new conversation?" with a "New conversation" button. Input is disabled. The button calls `startNewConversation()` which clears all chat state (messages, session, error) and creates a fresh session. **Does not show a generic error** — this is a normal state that users will encounter.
+
+### 410 — Session Closed (`session_closed`)
+
+```json
+{ "error": "session_closed", "message": "This conversation has been ended." }
+```
+
+Endpoints: All `/api/session/:id/*` routes
+
+**Triggers:** Session was closed by budget exhaustion, security termination, or explicit close.
+
+**Frontend implementation:** Shows localized message — EN: "This conversation has ended." with a "New conversation" button. Input is disabled permanently. The button calls `startNewConversation()` to clear state and start fresh.
+
+### 429 — Rate Limited (`rate_limited`)
+
+```json
+{ "error": "rate_limited", "message": "Too many messages. Please wait before sending another.", "retry_after_seconds": 60 }
+```
+
+Endpoints: `POST /api/session/:id/message`
+
+**Triggers:**
+- Per-session message limit exceeded (default: 25/session)
+- Per-IP hourly limit exceeded (default: 40/IP/hour)
+- Token budget exhausted (`retry_after_seconds: 0`)
+
+**Frontend implementation:** Input area is replaced with a disabled bar showing localized "Please wait (Xs)" with a live countdown from `retry_after_seconds`. When the countdown reaches zero, the error auto-clears and input is re-enabled. If `retry_after_seconds` is `0`, treated as permanent — input stays disabled, a "New conversation" button is shown (same as 410).
+
+### 500 — Internal Server Error (`internal_error`)
+
+```json
+{ "error": "internal_error", "message": "Something went wrong. Please try again." }
+```
+
+**Frontend implementation:** Shows localized message — EN: "We're experiencing a technical issue. Please try again." with a "Try again" button. A retry counter (`retryCountRef`) tracks attempts — on first failure, "Try again" is shown. If the retry also fails, the "Try again" button is replaced with a "New conversation" button. Input remains enabled throughout. The counter resets on any successful message send.
+
+### Frontend Action Matrix (implemented)
+
+| Condition | Disable Input | Allow Retry | Show "New Conversation" |
+|---|---|---|---|
+| **400** `invalid_request` | No | No | No |
+| **403** `blocked` | Yes (chat hidden) | No | No |
+| **403** `verification_failed` | No | Yes | No |
+| **404** `session_not_found` | Yes | No | **Yes** |
+| **410** `session_closed` | Yes | No | **Yes** |
+| **429** `rate_limited` | Yes (countdown) | Auto (after countdown) | If `retry_after_seconds` is 0 |
+| **500** `internal_error` | No | Yes (once) | If retry fails |
+| SSE `error` (`llm_error`, `internal_error`) | No | Yes | No |
+| SSE `session_terminated` | Yes | No | Only if `guard_level < 4` |
+| SSE `session_terminated` (guard ≥ 4) | Yes (chat hidden) | No | No |
+| SSE `budget_exhausted` | Yes | No | **Yes** |
+| Network error (no response) | No | Yes | No |
+
+---
+
+## 8. Session Endpoints Reference
 
 | Method | Endpoint                        | Purpose                   |
 |--------|---------------------------------|---------------------------|
