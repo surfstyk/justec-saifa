@@ -4,6 +4,7 @@ import { getConfig } from '../config.js';
 import { getSessionStore, getActiveSessionCount, getQueueLength, addToQueue, removeFromQueue, promoteFromQueue } from './store-memory.js';
 import { persistSession, persistMessage } from '../db/conversations.js';
 import { deleteHoldsForSession, sweepExpiredHolds } from '../integrations/calendar-holds.js';
+import { recordSessionCreated } from '../admin/stats.js';
 import type { Session, Language, CloseReason, SessionStatus } from '../types.js';
 
 export function hashIp(ip: string): string {
@@ -62,6 +63,7 @@ export function createSession(opts: {
   }
 
   store.set(session.id, session);
+  recordSessionCreated();
   return { session, status: 'active' };
 }
 

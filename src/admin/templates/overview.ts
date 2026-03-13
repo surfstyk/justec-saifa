@@ -106,7 +106,7 @@ export function renderOverview(): string {
       </div>
       <div class="card">
         <div class="card-label">Version</div>
-        <div class="card-value" style="font-size:18px">2.0.0</div>
+        <div class="card-value" style="font-size:18px">2.1.0</div>
       </div>
     </div>
   `;

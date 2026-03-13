@@ -22,6 +22,7 @@ import {
   writeBudgetWarning, writeBudgetExhausted, writeError, writeStreamEnd,
 } from '../sse/writer.js';
 import { ToolCallSanitizer } from '../sse/tool-call-sanitizer.js';
+import { recordMessage, recordEscalation, recordSecurityEvent, recordLLMError } from '../admin/stats.js';
 import type { Session, Message, ChatRequest, QualificationSignals, LLMChatRequest, ToolDefinition } from '../types.js';
 
 const router = Router();
@@ -126,6 +127,7 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
 
     if (threatLevel > 0) {
       logSecurityEvent(session.id, inputResult.reason ?? 'unknown', body.text.slice(0, 200), session.ip_hash);
+      recordSecurityEvent();
     }
   }
 
@@ -175,6 +177,7 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
   session.history.push(visitorMessage);
   session.messages_count++;
   session.last_activity = Date.now();
+  recordMessage();
 
   // Set up SSE
   setupSSE(res, session.tier);
@@ -247,6 +250,7 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
           }
           case 'error': {
             console.error(`[message] LLM error in round ${round}:`, event.message);
+            recordLLMError();
             writeError(res, 'llm_error', "We're experiencing a technical issue. Please try again.");
             writeStreamEnd(res);
             return;
@@ -438,6 +442,7 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
     const outputCheck = filterOutput(fullResponse);
     if (!outputCheck.passed) {
       logSecurityEvent(session.id, `output_filter:${outputCheck.reason}`, fullResponse.slice(0, 200), session.ip_hash);
+      recordSecurityEvent();
       // Sanitize stored text so the model doesn't see its own leaked content in subsequent turns
       fullResponse = "That's a great point — let me take a moment to consider how best to respond to that. Could you tell me a bit more?";
       // Use threatLevel 1 (not 2) — output leakage is less severe than input injection.
@@ -498,6 +503,7 @@ router.post('/api/session/:id/message', sessionLookup, async (req, res) => {
       const scoreResult = updateScore(session, body.behavioral, signals);
 
       if (scoreResult.shouldEscalate) {
+        recordEscalation();
         const previousTier = session.tier;
         session.tier = 'meeting_room';
         createLeadCard(session).catch(e => console.error('[trello] Lead card creation failed:', e));

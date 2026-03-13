@@ -10,6 +10,7 @@ import { moveToBooked } from '../integrations/trello-cards.js';
 import { notifyBookingConfirmed } from '../integrations/telegram.js';
 import { getSessionStore } from '../session/store-memory.js';
 import { getConfig } from '../config.js';
+import { recordBooking } from '../admin/stats.js';
 import type { Session, Message } from '../types.js';
 import type { AvailableSlot } from '../integrations/calendar.js';
 
@@ -209,6 +210,7 @@ async function processPaymentConfirmation(data: PaymentConfirmationData): Promis
     session.payment_provider = data.provider;
     session.payment_id = data.payment_id;
     session.booking_time = data.slot_start;
+    recordBooking();
   } else {
     console.warn(`[payment] Session ${data.session_id} not found in memory — proceeding with metadata`);
   }
