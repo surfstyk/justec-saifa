@@ -16,6 +16,7 @@ import languageRoutes from './routes/language.js';
 import closeRoutes from './routes/close.js';
 import messageRoutes from './routes/message.js';
 import webhookRoutes from './routes/webhooks.js';
+import adminRoutes from './admin/routes.js';
 
 const config = loadConfig();
 const app = express();
@@ -50,6 +51,9 @@ app.use((req, _res, next) => {
   });
   next();
 });
+
+// Admin dashboard (before API routes, needs its own body parsing for form data)
+app.use(adminRoutes);
 
 // Routes
 app.use(healthRoutes);
