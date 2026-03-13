@@ -13,7 +13,7 @@ export function renderPrompts(): string {
   try {
     files = readdirSync(promptDir).filter(f => f.endsWith('.md')).sort();
   } catch {
-    return layout('Prompts', '/admin/prompts', '<p style="color:#e74c3c">Could not read prompts directory.</p>');
+    return layout('Prompts', '/admin/justec/prompts', '<p style="color:#e74c3c">Could not read prompts directory.</p>');
   }
 
   // Individual files
@@ -84,5 +84,5 @@ export function renderPrompts(): string {
     ${fileBlocks}
   `;
 
-  return layout('Prompts', '/admin/prompts', body);
+  return layout('Prompts', '/admin/justec/prompts', body);
 }

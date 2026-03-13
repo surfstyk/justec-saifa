@@ -68,7 +68,7 @@ export function renderPerformance(): string {
     ${renderBarChart(secEvents7d)}
   `;
 
-  return layout('Performance', '/admin/performance', body);
+  return layout('Performance', '/admin/justec/performance', body);
 }
 
 function renderBarChart(data: Array<{ date: string; count: number }>): string {

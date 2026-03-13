@@ -111,7 +111,7 @@ export function renderOverview(): string {
     </div>
   `;
 
-  return layout('Overview', '/admin/', body);
+  return layout('Overview', '/admin/justec/', body);
 }
 
 const processStartTime = Date.now();

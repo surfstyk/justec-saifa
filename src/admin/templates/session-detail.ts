@@ -21,9 +21,9 @@ export function renderSessionDetail(id: string): string {
     return renderFromDb(dbSession, messages);
   }
 
-  return layout('Session Not Found', '/admin/sessions', `
+  return layout('Session Not Found', '/admin/justec/sessions', `
     <p style="color:#95a5a6">Session <code>${escapeHtml(id)}</code> not found in memory or database.</p>
-    <p><a href="/admin/sessions">Back to active sessions</a> | <a href="/admin/history">Check history</a></p>
+    <p><a href="/admin/justec/sessions">Back to active sessions</a> | <a href="/admin/justec/history">Check history</a></p>
   `);
 }
 
@@ -34,7 +34,7 @@ function renderFromSession(s: Session, messages: Message[], isActive: boolean): 
   const now = Date.now();
 
   const body = `
-    <p><a href="/admin/sessions">&larr; Back to sessions</a></p>
+    <p><a href="/admin/justec/sessions">&larr; Back to sessions</a></p>
 
     <div class="card-grid" style="margin-top:16px">
       <div class="card">
@@ -128,7 +128,7 @@ function renderFromSession(s: Session, messages: Message[], isActive: boolean): 
     </div>
   `;
 
-  return layout(`Session ${s.id.slice(0, 8)}`, '/admin/sessions', body);
+  return layout(`Session ${s.id.slice(0, 8)}`, '/admin/justec/sessions', body);
 }
 
 function renderFromDb(dbSession: {
@@ -156,7 +156,7 @@ function renderFromDb(dbSession: {
 }, messages: Message[]): string {
   // Reconstruct a minimal session-like view from DB row
   const body = `
-    <p><a href="/admin/history">&larr; Back to history</a></p>
+    <p><a href="/admin/justec/history">&larr; Back to history</a></p>
 
     <div class="card-grid" style="margin-top:16px">
       <div class="card">
@@ -240,7 +240,7 @@ function renderFromDb(dbSession: {
     </div>
   `;
 
-  return layout(`Session ${String(dbSession.id).slice(0, 8)}`, '/admin/sessions', body);
+  return layout(`Session ${String(dbSession.id).slice(0, 8)}`, '/admin/justec/sessions', body);
 }
 
 function renderTimeline(messages: Message[]): string {

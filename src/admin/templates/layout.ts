@@ -5,12 +5,12 @@ export interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: 'Overview', href: '/admin/' },
-  { label: 'Sessions', href: '/admin/sessions' },
-  { label: 'History', href: '/admin/history' },
-  { label: 'Prompts', href: '/admin/prompts' },
-  { label: 'Config', href: '/admin/config' },
-  { label: 'Performance', href: '/admin/performance' },
+  { label: 'Overview', href: '/admin/justec/' },
+  { label: 'Sessions', href: '/admin/justec/sessions' },
+  { label: 'History', href: '/admin/justec/history' },
+  { label: 'Prompts', href: '/admin/justec/prompts' },
+  { label: 'Config', href: '/admin/justec/config' },
+  { label: 'Performance', href: '/admin/justec/performance' },
 ];
 
 export function layout(title: string, activePath: string, body: string): string {

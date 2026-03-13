@@ -93,7 +93,7 @@ export function renderConfig(): string {
     })}
   `;
 
-  return layout('Config', '/admin/config', body);
+  return layout('Config', '/admin/justec/config', body);
 }
 
 function section(title: string, rows: Record<string, string>): string {

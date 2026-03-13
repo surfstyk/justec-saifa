@@ -30,7 +30,7 @@ export function renderSessions(): string {
 
       rows += `
         <tr>
-          <td><a href="/admin/sessions/${s.id}">${s.id.slice(0, 8)}</a></td>
+          <td><a href="/admin/justec/sessions/${s.id}">${s.id.slice(0, 8)}</a></td>
           <td>${tierBadge(s.tier)}</td>
           <td>${s.language}</td>
           <td>${s.messages_count}</td>
@@ -65,5 +65,5 @@ export function renderSessions(): string {
     </table>
   `;
 
-  return layout('Active Sessions', '/admin/sessions', body);
+  return layout('Active Sessions', '/admin/justec/sessions', body);
 }

@@ -11,39 +11,39 @@ import { renderPerformance } from './templates/performance.js';
 const router = Router();
 
 // All admin routes require authentication
-router.use('/admin', adminAuth);
+router.use('/admin/justec', adminAuth);
 
 // Overview
-router.get('/admin/', (_req, res) => {
+router.get('/admin/justec/', (_req, res) => {
   res.set('Content-Type', 'text/html').send(renderOverview());
 });
 
-router.get('/admin', (_req, res) => {
-  res.redirect('/admin/');
+router.get('/admin/justec', (_req, res) => {
+  res.redirect('/admin/justec/');
 });
 
 // Active Sessions
-router.get('/admin/sessions', (_req, res) => {
+router.get('/admin/justec/sessions', (_req, res) => {
   res.set('Content-Type', 'text/html').send(renderSessions());
 });
 
 // Session Detail
-router.get('/admin/sessions/:id', (req, res) => {
+router.get('/admin/justec/sessions/:id', (req, res) => {
   res.set('Content-Type', 'text/html').send(renderSessionDetail(req.params.id));
 });
 
 // Prompts
-router.get('/admin/prompts', (_req, res) => {
+router.get('/admin/justec/prompts', (_req, res) => {
   res.set('Content-Type', 'text/html').send(renderPrompts());
 });
 
 // Config
-router.get('/admin/config', (_req, res) => {
+router.get('/admin/justec/config', (_req, res) => {
   res.set('Content-Type', 'text/html').send(renderConfig());
 });
 
 // History
-router.get('/admin/history', (req, res) => {
+router.get('/admin/justec/history', (req, res) => {
   res.set('Content-Type', 'text/html').send(renderHistory(req.query as {
     page?: string;
     per_page?: string;
@@ -53,7 +53,7 @@ router.get('/admin/history', (req, res) => {
 });
 
 // Performance
-router.get('/admin/performance', (_req, res) => {
+router.get('/admin/justec/performance', (_req, res) => {
   res.set('Content-Type', 'text/html').send(renderPerformance());
 });
 

@@ -42,7 +42,7 @@ export function renderHistory(query: {
       rows += `
         <tr>
           <td>${formatTimestamp(s.created_at).slice(0, 10)}</td>
-          <td><a href="/admin/sessions/${s.id}">${s.id.slice(0, 8)}</a></td>
+          <td><a href="/admin/justec/sessions/${s.id}">${s.id.slice(0, 8)}</a></td>
           <td>${duration}</td>
           <td>${tierBadge(s.tier)}</td>
           <td>${s.score_final ?? 0} ${classificationBadge(cls)}</td>
@@ -55,7 +55,7 @@ export function renderHistory(query: {
   }
 
   // Pagination
-  const baseUrl = '/admin/history?per_page=' + perPage +
+  const baseUrl = '/admin/justec/history?per_page=' + perPage +
     (classification ? '&classification=' + classification : '') +
     (from ? '&from=' + from : '');
 
@@ -94,5 +94,5 @@ export function renderHistory(query: {
     ${pagination}
   `;
 
-  return layout('History', '/admin/history', body);
+  return layout('History', '/admin/justec/history', body);
 }
