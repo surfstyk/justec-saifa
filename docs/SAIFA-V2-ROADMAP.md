@@ -923,4 +923,5 @@ _Updated after each phase ships._
 | Phase | Version | Date | Commits | Notes |
 |-------|---------|------|---------|-------|
 | 0 (Cleanup) | 2.0.0 | 2026-03-13 | 983ecd8, 2c7e9ef, bddfc47 | Archive stale docs, bump version, expand test spec |
-| 1 (Dashboard) | 2.1.0 | 2026-03-13 | 9010ea7–present | 7 screens, stats counter, auth, SQLite queries, session store extensions |
+| 1 (Dashboard) | 2.1.0 | 2026-03-13 | 9010ea7–9d88142 | 7 screens, stats counter, auth, SQLite queries, session store extensions |
+| 2 (Pipeline) | 2.2.0 | 2026-03-13 | 68dcc10 | 8-stage pipeline, thin route handler, zero behavioral changes |
