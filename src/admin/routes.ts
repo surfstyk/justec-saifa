@@ -5,6 +5,8 @@ import { renderSessions } from './templates/sessions.js';
 import { renderSessionDetail } from './templates/session-detail.js';
 import { renderPrompts } from './templates/prompts.js';
 import { renderConfig } from './templates/config.js';
+import { renderHistory } from './templates/history.js';
+import { renderPerformance } from './templates/performance.js';
 
 const router = Router();
 
@@ -38,6 +40,21 @@ router.get('/admin/prompts', (_req, res) => {
 // Config
 router.get('/admin/config', (_req, res) => {
   res.set('Content-Type', 'text/html').send(renderConfig());
+});
+
+// History
+router.get('/admin/history', (req, res) => {
+  res.set('Content-Type', 'text/html').send(renderHistory(req.query as {
+    page?: string;
+    per_page?: string;
+    classification?: string;
+    from?: string;
+  }));
+});
+
+// Performance
+router.get('/admin/performance', (_req, res) => {
+  res.set('Content-Type', 'text/html').send(renderPerformance());
 });
 
 export default router;
