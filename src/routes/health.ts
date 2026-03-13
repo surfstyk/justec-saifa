@@ -8,7 +8,7 @@ const startTime = Date.now();
 router.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    version: '2.1.0',
+    version: '2.2.0',
     active_sessions: 0, // Updated by session manager later
     queue_length: 0,
     uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
@@ -28,7 +28,7 @@ router.get('/api/health/detailed', (req, res) => {
   const config = getConfig();
   res.json({
     status: 'ok',
-    version: '2.1.0',
+    version: '2.2.0',
     active_sessions: 0,
     queue_length: 0,
     uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
