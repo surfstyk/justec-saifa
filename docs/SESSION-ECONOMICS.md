@@ -2,7 +2,7 @@
 
 Reference document for understanding conversation flow mechanics, token budgets, rate limits, scoring thresholds, and per-session costs.
 
-**Last updated**: 2026-03-01
+**Last updated**: 2026-03-13
 
 ---
 
@@ -14,14 +14,17 @@ A session moves through two stages, each with different prompts, tools, and budg
 
 The agent qualifies visitors through natural conversation using SPIN methodology (Situation, Problem, Implication, Need-Payoff). The prompt instructs: "You don't need all four — 2-3 well-placed questions often suffice."
 
-**Available tools**: `report_signals` only (no booking tools).
+**Available tools**: `report_signals`, `present_product` (self-service product referrals).
 
-**Typical exchange count**: 6-10 visitor messages.
+**Routing priority**: When a visitor's first message reveals clear intent (e.g., "WordPress membership plugin", "market intelligence"), the agent routes immediately — either via `present_product` for self-service products (MemberMagix, KongQuant) or by qualifying for a Strategy Session. SPIN discovery is only used when intent is unclear.
+
+**Typical exchange count**: 2-10 visitor messages (depends on routing path).
 
 | Exchange | Purpose |
 |----------|---------|
-| 1 | Visitor's opening message, agent responds with tailored question |
-| 2-4 | Discovery — problem specificity, authority, timeline, need alignment |
+| 1 | Visitor's opening message — agent routes immediately if intent is clear |
+| 1-2 | **Self-service path**: product pitch → `present_product` → warm close |
+| 2-4 | **Discovery path**: problem specificity, authority, timeline, need alignment |
 | 5-7 | Deeper qualification — budget indicators, engagement depth |
 | 8-10 | Buffer for multilingual conversations, tangents, clarifications |
 
@@ -31,7 +34,7 @@ The agent qualifies visitors through natural conversation using SPIN methodology
 
 Sequential booking steps enforced by prompt: "Call ONE booking tool per message, then STOP and wait for the visitor to respond."
 
-**Available tools**: `report_signals`, `request_phone`, `check_calendar_availability`, `request_payment` (gated sequentially — each unlocks only after the previous step completes).
+**Available tools**: `report_signals`, `present_product`, `request_phone`, `check_calendar_availability`, `request_payment` (booking tools gated sequentially — each unlocks only after the previous step completes).
 
 **Typical exchange count**: 7-10 visitor messages.
 
