@@ -1,9 +1,34 @@
 import { getSessionStore } from '../../session/store-memory.js';
 import { getBudget } from '../../session/budget.js';
+import { getConfig } from '../../config.js';
 import { getSessionById } from '../queries.js';
 import { getSessionMessages } from '../../db/conversations.js';
 import { layout, escapeHtml, formatTimestamp, formatDuration, classificationBadge, tierBadge } from './layout.js';
 import type { Session, Message } from '../../types.js';
+
+function calculateCost(messages: Message[]): { input: number; output: number; total: number; currency: string } | null {
+  const pricing = getConfig().llm.pricing;
+  if (!pricing) return null;
+
+  let totalInput = 0;
+  let totalOutput = 0;
+  for (const msg of messages) {
+    if (msg.tokens_input) totalInput += msg.tokens_input;
+    if (msg.tokens_output) totalOutput += msg.tokens_output;
+  }
+
+  if (totalInput === 0 && totalOutput === 0) return null;
+
+  const inputCost = (totalInput / 1_000_000) * pricing.input_per_million;
+  const outputCost = (totalOutput / 1_000_000) * pricing.output_per_million;
+
+  return { input: inputCost, output: outputCost, total: inputCost + outputCost, currency: pricing.currency };
+}
+
+function formatCost(cost: { input: number; output: number; total: number; currency: string }): string {
+  const fmt = (n: number) => n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(3)}`;
+  return `${fmt(cost.total)} (in: ${fmt(cost.input)}, out: ${fmt(cost.output)})`;
+}
 
 export function renderSessionDetail(id: string): string {
   // Try in-memory first (active session), then SQLite (closed session)
@@ -125,6 +150,7 @@ function renderFromSession(s: Session, messages: Message[], isActive: boolean): 
       ${s.close_reason ? infoRow('Close Reason', s.close_reason) : ''}
       ${infoRow('IP Hash', s.ip_hash)}
       ${infoRow('Consent', s.consent)}
+      ${(() => { const c = calculateCost(messages); return c ? infoRow('LLM Cost', formatCost(c)) : ''; })()}
     </div>
   `;
 
@@ -237,6 +263,7 @@ function renderFromDb(dbSession: {
       ${infoRow('Close Reason', dbSession.close_reason as string | null)}
       ${infoRow('IP Hash', dbSession.ip_hash as string | null)}
       ${infoRow('Tokens Used', String(dbSession.tokens_used ?? 0))}
+      ${(() => { const c = calculateCost(messages); return c ? infoRow('LLM Cost', formatCost(c)) : ''; })()}
     </div>
   `;
 
@@ -270,7 +297,7 @@ function renderTimeline(messages: Message[]): string {
 
     return `
       <div class="timeline-entry ${cssClass}">
-        <div class="timeline-meta">${label} &middot; ${time}${msg.tokens ? ` &middot; ${msg.tokens} tokens${msg.tokens_input ? ` (in: ${msg.tokens_input}, out: ${msg.tokens_output ?? 0})` : ''}` : ''}</div>
+        <div class="timeline-meta">${label} &middot; ${time}${msg.tokens ? ` &middot; ${msg.tokens} tokens${msg.tokens_input ? ` (in: ${msg.tokens_input}, out: ${msg.tokens_output ?? 0})` : ''}${(() => { const p = getConfig().llm.pricing; if (!p || !msg.tokens_input) return ''; const c = ((msg.tokens_input / 1e6) * p.input_per_million) + (((msg.tokens_output ?? 0) / 1e6) * p.output_per_million); return ` &middot; $${c < 0.01 ? c.toFixed(4) : c.toFixed(3)}`; })()}` : ''}</div>
         <div class="timeline-content">${content}</div>
       </div>`;
   }).join('');

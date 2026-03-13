@@ -32,8 +32,8 @@ export function persistSession(session: Session): void {
 export function persistMessage(sessionId: string, message: Message): void {
   const db = getDb();
   db.prepare(`
-    INSERT INTO messages (session_id, role, content, action_json, structured_json, tokens, created_at, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (session_id, role, content, action_json, structured_json, tokens, tokens_input, tokens_output, created_at, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     sessionId,
     message.role,
@@ -41,6 +41,8 @@ export function persistMessage(sessionId: string, message: Message): void {
     message.action ? JSON.stringify(message.action) : null,
     message.structured.length > 0 ? JSON.stringify(message.structured) : null,
     message.tokens ?? null,
+    message.tokens_input ?? null,
+    message.tokens_output ?? null,
     Date.now(),
     message.metadata ? JSON.stringify(message.metadata) : null,
   );
@@ -49,13 +51,15 @@ export function persistMessage(sessionId: string, message: Message): void {
 export function getSessionMessages(sessionId: string): Message[] {
   const db = getDb();
   const rows = db.prepare(
-    'SELECT role, content, action_json, structured_json, tokens, created_at, metadata FROM messages WHERE session_id = ? ORDER BY id ASC'
+    'SELECT role, content, action_json, structured_json, tokens, tokens_input, tokens_output, created_at, metadata FROM messages WHERE session_id = ? ORDER BY id ASC'
   ).all(sessionId) as Array<{
     role: string;
     content: string | null;
     action_json: string | null;
     structured_json: string | null;
     tokens: number | null;
+    tokens_input: number | null;
+    tokens_output: number | null;
     created_at: number;
     metadata: string | null;
   }>;
@@ -67,6 +71,8 @@ export function getSessionMessages(sessionId: string): Message[] {
     structured: row.structured_json ? JSON.parse(row.structured_json) : [],
     timestamp: new Date(row.created_at).toISOString(),
     tokens: row.tokens ?? undefined,
+    tokens_input: row.tokens_input ?? undefined,
+    tokens_output: row.tokens_output ?? undefined,
     metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
   }));
 }

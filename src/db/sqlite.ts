@@ -14,6 +14,7 @@ export function getDb(): Database.Database {
   _db.pragma('foreign_keys = ON');
 
   initSchema(_db);
+  runMigrations(_db);
   return _db;
 }
 
@@ -79,6 +80,18 @@ function initSchema(db: Database.Database): void {
       window_start INTEGER NOT NULL
     );
   `);
+}
+
+function runMigrations(db: Database.Database): void {
+  // Add tokens_input / tokens_output columns (v2.5.0)
+  const cols = db.pragma('table_info(messages)') as Array<{ name: string }>;
+  const colNames = cols.map(c => c.name);
+  if (!colNames.includes('tokens_input')) {
+    db.exec('ALTER TABLE messages ADD COLUMN tokens_input INTEGER');
+  }
+  if (!colNames.includes('tokens_output')) {
+    db.exec('ALTER TABLE messages ADD COLUMN tokens_output INTEGER');
+  }
 }
 
 export function closeDb(): void {

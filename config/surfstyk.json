@@ -32,6 +32,11 @@
       "provider": "google",
       "model": "gemini-3-flash-preview",
       "max_tokens": 8192
+    },
+    "pricing": {
+      "input_per_million": 0.50,
+      "output_per_million": 3.00,
+      "currency": "USD"
     }
   },
   "scoring": {
@@ -60,9 +65,9 @@
   },
   "calendar": {
     "working_hours": {
-      "days": [1, 2, 3, 4, 5],
-      "start": "09:00",
-      "end": "17:00",
+      "days": [1, 2, 3, 4, 5, 6],
+      "start": "06:00",
+      "end": "20:00",
       "timezone": "Europe/Lisbon"
     },
     "slot_duration_minutes": 60,

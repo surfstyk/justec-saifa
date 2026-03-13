@@ -226,6 +226,11 @@ export interface AppConfig {
   llm: {
     lobby: LLMModelConfig;
     meeting_room: LLMModelConfig;
+    pricing?: {
+      input_per_million: number;
+      output_per_million: number;
+      currency: string;
+    };
   };
   scoring: {
     weights: {

@@ -31,6 +31,7 @@ const DEFAULTS: AppConfig = {
   llm: {
     lobby: { provider: 'google', model: 'gemini-3-flash-preview', max_tokens: 1024 },
     meeting_room: { provider: 'google', model: 'gemini-3-flash-preview', max_tokens: 2048 },
+    pricing: { input_per_million: 0.50, output_per_million: 3.00, currency: 'USD' },
   },
   scoring: {
     weights: { explicit: 0.40, behavioral: 0.35, fit: 0.25 },
