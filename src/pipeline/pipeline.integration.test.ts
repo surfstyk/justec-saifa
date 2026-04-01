@@ -343,6 +343,47 @@ describe('Pipeline Integration', () => {
     expect(ctx.fullResponse).toContain('Willkommen');
   });
 
+  it('20. consent pending → 403 halt, no LLM call', async () => {
+    mockAdapter = new MockLLMAdapter([
+      { type: 'token', text: 'Should not reach here' },
+      { type: 'done', usage: { input_tokens: 10, output_tokens: 5 } },
+    ]);
+
+    const session = makeSession({ consent: 'pending', messages_count: 0 });
+    const { res } = makeMockRes();
+    const ctx = makeCtx(session, 'Hello', res);
+
+    await runPipeline(ctx);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'consent_required', consent_state: 'pending' }),
+    );
+    // No message should be added to history
+    expect(session.history.length).toBe(0);
+    expect(session.messages_count).toBe(0);
+  });
+
+  it('21. consent declined → 403 halt, no LLM call', async () => {
+    mockAdapter = new MockLLMAdapter([
+      { type: 'token', text: 'Should not reach here' },
+      { type: 'done', usage: { input_tokens: 10, output_tokens: 5 } },
+    ]);
+
+    const session = makeSession({ consent: 'declined', messages_count: 0 });
+    const { res } = makeMockRes();
+    const ctx = makeCtx(session, 'Hello', res);
+
+    await runPipeline(ctx);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'consent_required', consent_state: 'declined' }),
+    );
+    expect(session.history.length).toBe(0);
+    expect(session.messages_count).toBe(0);
+  });
+
   it('19. Portuguese conversation → no false security flags', async () => {
     mockAdapter = new MockLLMAdapter([
       { type: 'token', text: 'Bem-vindo! Como posso ajudá-lo?' },

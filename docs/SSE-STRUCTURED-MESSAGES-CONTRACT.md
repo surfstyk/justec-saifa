@@ -1,7 +1,7 @@
 # SSE & Structured Messages — Frontend/Middleware Contract
 
-**Version:** 1.3.1
-**Date:** 2026-03-13
+**Version:** 1.4.0
+**Date:** 2026-03-31
 **Status:** Active — aligns with deployed middleware
 
 ---
@@ -10,6 +10,7 @@
 
 | Version | Date       | Changes                                                        |
 |---------|------------|----------------------------------------------------------------|
+| 1.4.0   | 2026-03-31 | **Breaking:** Session token authorization. `POST /api/session` now returns `session_token`. All session-bound endpoints require `Authorization: Bearer <token>` header. Close endpoint accepts token in body for sendBeacon. New `403 consent_required` error enforces consent before messaging. New `403 invalid_token` error for missing/wrong token. Updated Sections 1, 7, 8 and action matrix. |
 | 1.3.1   | 2026-03-13 | Fixed Section 3.3: `payment_request` payload now shows actual `providers` nested structure (Stripe embedded checkout + PayPal SDK), not outdated redirect URLs. Fixed action matrix: replaced non-existent `connection_error` with actual SSE error codes. |
 | 1.3.0   | 2026-03-13 | Added Section 7: HTTP Error Responses — complete error contract with status codes, triggers, frontend implementation details, and action matrix. |
 | 1.2.0   | 2026-03-12 | Added `product_link` structured message type for self-service product referrals (MemberMagix, KongQuant). Display-only — no action flows back. Available in both lobby and meeting room tiers via `present_product` tool. |
@@ -22,6 +23,13 @@
 
 **Endpoint:** `POST /api/session/:id/message`
 
+**Required request header:**
+```
+Authorization: Bearer <session_token>
+```
+
+The `session_token` is returned in the `POST /api/session` response (see Section 8). It must be included on **every** session-bound request (`/message`, `/state`, `/history`, `/consent`, `/language`, `/close`). Requests without a valid token receive `403 invalid_token`.
+
 **Request body** (one of):
 ```json
 { "text": "Hello", "behavioral": { ... } }
@@ -32,6 +40,7 @@
 
 - Must have **either** `text` or `action`, never both, never neither.
 - `behavioral` is optional on all messages.
+- **Consent must be granted** before sending messages. Requests with `pending` or `declined` consent receive `403 consent_required`.
 
 **Response:** `Content-Type: text/event-stream`
 
@@ -459,6 +468,26 @@ All HTTP errors return JSON:
 
 ### 403 — Forbidden
 
+**`invalid_token`** — Missing, malformed, or wrong `Authorization: Bearer <token>` header.
+
+```json
+{ "error": "invalid_token", "message": "Missing or malformed authorization." }
+```
+
+Endpoints: All `/api/session/:id/*` routes (except `/close` which also accepts token in body)
+
+**Frontend implementation:** This indicates the stored session token is missing or corrupted. Show "Your session has ended. Would you like to start a new conversation?" with a "New conversation" button. Clear stored session state including `session_token`.
+
+**`consent_required`** — Message sent before consent was granted, or after consent was declined.
+
+```json
+{ "error": "consent_required", "consent_state": "pending" | "declined", "message": "Consent is required before sending messages." }
+```
+
+Endpoints: `POST /api/session/:id/message`
+
+**Frontend implementation:** This should not occur if the consent dialog is shown correctly. If `consent_state` is `"pending"`, re-show the consent dialog. If `"declined"`, input should already be disabled. No retry.
+
 **`blocked`** — Visitor's IP has been blocklisted after repeated security violations (guard level 4).
 
 ```json
@@ -534,6 +563,9 @@ Endpoints: `POST /api/session/:id/message`
 | Condition | Disable Input | Allow Retry | Show "New Conversation" |
 |---|---|---|---|
 | **400** `invalid_request` | No | No | No |
+| **403** `invalid_token` | Yes | No | **Yes** |
+| **403** `consent_required` (pending) | Yes | No | No (re-show consent dialog) |
+| **403** `consent_required` (declined) | Yes | No | No |
 | **403** `blocked` | Yes (chat hidden) | No | No |
 | **403** `verification_failed` | No | Yes | No |
 | **404** `session_not_found` | Yes | No | **Yes** |
@@ -550,17 +582,49 @@ Endpoints: `POST /api/session/:id/message`
 
 ## 8. Session Endpoints Reference
 
-| Method | Endpoint                        | Purpose                   |
-|--------|---------------------------------|---------------------------|
-| POST   | `/api/session`                  | Create session (requires Turnstile token) |
-| POST   | `/api/session/:id/message`      | Send message / action (SSE response) |
-| GET    | `/api/session/:id/state`        | Get session state, scores, budget |
-| GET    | `/api/session/:id/history`      | Get conversation history   |
-| POST   | `/api/session/:id/consent`      | Grant/decline consent      |
-| POST   | `/api/session/:id/language`     | Change language            |
-| POST   | `/api/session/:id/close`        | Close session (sendBeacon) |
-| GET    | `/api/health`                   | Health check               |
-| GET    | `/api/status`                   | System status              |
-| POST   | `/api/webhooks/stripe`          | Stripe webhook (internal)  |
-| POST   | `/api/webhooks/paypal`          | PayPal webhook (internal)  |
-| GET    | `/api/paypal/return`            | PayPal redirect capture (internal) |
+| Method | Endpoint                        | Purpose                   | Auth |
+|--------|---------------------------------|---------------------------|------|
+| POST   | `/api/session`                  | Create session (requires Turnstile token) | None |
+| POST   | `/api/session/:id/message`      | Send message / action (SSE response) | Bearer token |
+| GET    | `/api/session/:id/state`        | Get session state, scores, budget | Bearer token |
+| GET    | `/api/session/:id/history`      | Get conversation history   | Bearer token |
+| POST   | `/api/session/:id/consent`      | Grant/decline consent      | Bearer token |
+| POST   | `/api/session/:id/language`     | Change language            | Bearer token |
+| POST   | `/api/session/:id/close`        | Close session (sendBeacon) | Bearer token (header or body) |
+| GET    | `/api/health`                   | Health check               | None |
+| GET    | `/api/status`                   | System status              | None |
+| POST   | `/api/webhooks/stripe`          | Stripe webhook (internal)  | Stripe signature |
+| POST   | `/api/webhooks/paypal`          | PayPal webhook (internal)  | PayPal signature |
+| GET    | `/api/paypal/return`            | PayPal redirect capture (internal) | None |
+
+### Session creation response
+
+`POST /api/session` now returns `session_token` alongside `session_id`:
+
+```json
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "session_token": "dGhpcyBpcyBhIGJhc2U2NHVybCB0b2tlbg...",
+  "status": "active",
+  "greeting": { ... },
+  "consent_request": { ... },
+  "post_consent": { ... },
+  "config": { ... }
+}
+```
+
+**The `session_token` is only returned once at creation.** Store it securely (sessionStorage recommended, not localStorage). Include it on every subsequent request:
+
+```
+Authorization: Bearer <session_token>
+```
+
+### Close endpoint (sendBeacon)
+
+Since `navigator.sendBeacon()` cannot set custom headers, the close endpoint also accepts the token in the request body:
+
+```json
+{ "reason": "visitor_left", "session_token": "<token>" }
+```
+
+The `Authorization` header is also accepted for non-sendBeacon callers.

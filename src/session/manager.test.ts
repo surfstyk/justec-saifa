@@ -23,7 +23,7 @@ vi.mock('../admin/stats.js', () => ({
 }));
 
 // Need to import after mocks are set up
-const { createSession, getSession, closeSession, updateSession } = await import('./manager.js');
+const { createSession, getSession, closeSession, updateSession, verifySessionToken } = await import('./manager.js');
 const { getSessionStore, getActiveSessionCount } = await import('./store-memory.js');
 const { persistSession } = await import('../db/conversations.js');
 
@@ -108,5 +108,31 @@ describe('Session Manager', () => {
     expect(session.visitor_info.language).toBe('de');
     expect(session.visitor_info.name).toBeNull();
     expect(session.visitor_info.company).toBeNull();
+  });
+
+  it('9. createSession returns session_token, session has token_hash', () => {
+    const { session, sessionToken } = createSession({ language: 'en', ipHash: 'abc' });
+    expect(sessionToken).toBeDefined();
+    expect(typeof sessionToken).toBe('string');
+    expect(sessionToken.length).toBeGreaterThan(20);
+    expect(session.token_hash).toBeDefined();
+    expect(session.token_hash).toHaveLength(64); // SHA-256 hex
+  });
+
+  it('10. verifySessionToken accepts correct token', () => {
+    const { session, sessionToken } = createSession({ language: 'en', ipHash: 'abc' });
+    expect(verifySessionToken(session, sessionToken)).toBe(true);
+  });
+
+  it('11. verifySessionToken rejects wrong token', () => {
+    const { session } = createSession({ language: 'en', ipHash: 'abc' });
+    expect(verifySessionToken(session, 'wrong-token')).toBe(false);
+  });
+
+  it('12. each session gets a unique token', () => {
+    const a = createSession({ language: 'en', ipHash: 'ip1' });
+    const b = createSession({ language: 'en', ipHash: 'ip2' });
+    expect(a.sessionToken).not.toBe(b.sessionToken);
+    expect(a.session.token_hash).not.toBe(b.session.token_hash);
   });
 });

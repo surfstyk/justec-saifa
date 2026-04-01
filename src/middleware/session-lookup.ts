@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from 'express';
-import { getSession } from '../session/manager.js';
+import { getSession, verifySessionToken } from '../session/manager.js';
 
 export function sessionLookup(req: Request, res: Response, next: NextFunction): void {
   const raw = req.params.id || req.headers['x-session-id'];
@@ -18,6 +18,19 @@ export function sessionLookup(req: Request, res: Response, next: NextFunction): 
 
   if (session.status === 'closed') {
     res.status(410).json({ error: 'session_closed', message: 'This conversation has been ended.' });
+    return;
+  }
+
+  // Verify session token from Authorization header
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(403).json({ error: 'invalid_token', message: 'Missing or malformed authorization.' });
+    return;
+  }
+
+  const token = authHeader.slice(7);
+  if (!verifySessionToken(session, token)) {
+    res.status(403).json({ error: 'invalid_token', message: 'Invalid session authorization.' });
     return;
   }
 

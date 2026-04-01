@@ -1,6 +1,6 @@
 import { resolveModel } from '../../llm/router.js';
 import { handleToolCall } from '../../tools/handler.js';
-import { ToolCallSanitizer } from '../../sse/tool-call-sanitizer.js';
+import { OutboundGate } from '../../sse/outbound-gate.js';
 import {
   setupSSE, writeProcessing, writeToken, writeStructuredMessage, writeError, writeStreamEnd,
 } from '../../sse/writer.js';
@@ -25,7 +25,10 @@ export async function llmStream(ctx: PipelineContext): Promise<StageResult> {
   writeProcessing(res);
 
   const { adapter, config: modelConfig } = resolveModel(session);
-  const sanitizer = new ToolCallSanitizer();
+  const gate = new OutboundGate((reason) => {
+    if (ctx.threatLevel < 1) ctx.threatLevel = 1;
+    console.warn(`[pipeline:llm-stream] Outbound gate leakage: ${reason}`);
+  });
   let calendarCheckUsedThisTurn = false;
   let { messages } = ctx;
 
@@ -48,7 +51,7 @@ export async function llmStream(ctx: PipelineContext): Promise<StageResult> {
 
       switch (event.type) {
         case 'token': {
-          const clean = sanitizer.push(event.text);
+          const clean = gate.push(event.text);
           ctx.fullResponse += clean;
           if (clean) writeToken(res, clean);
           break;
@@ -72,8 +75,8 @@ export async function llmStream(ctx: PipelineContext): Promise<StageResult> {
       }
     }
 
-    // Flush any buffered/pending text from the sanitizer
-    const flushed = sanitizer.flush();
+    // Flush any buffered/pending text from the outbound gate
+    const flushed = gate.flush();
     if (flushed) {
       ctx.fullResponse += flushed;
       if (!ctx.clientDisconnected) writeToken(res, flushed);

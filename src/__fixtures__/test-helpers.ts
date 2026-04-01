@@ -1,4 +1,9 @@
+import { createHash } from 'crypto';
 import type { Session, AppConfig, Language, QualificationSignals, BehavioralSignals } from '../types.js';
+
+/** Deterministic token hash for tests. Token value: 'test-token'. */
+export const TEST_SESSION_TOKEN = 'test-token';
+export const TEST_SESSION_TOKEN_HASH = createHash('sha256').update(TEST_SESSION_TOKEN).digest('hex');
 
 /**
  * Creates a minimal test session with sensible defaults.
@@ -7,6 +12,7 @@ import type { Session, AppConfig, Language, QualificationSignals, BehavioralSign
 export function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'test-session-001',
+    token_hash: TEST_SESSION_TOKEN_HASH,
     status: 'active',
     tier: 'lobby',
     language: 'en' as Language,

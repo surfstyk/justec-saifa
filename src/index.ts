@@ -32,7 +32,7 @@ const corsOrigin = config.dev_mode
 app.use(cors({
   origin: corsOrigin,
   methods: ['POST', 'GET', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Session-ID', 'X-Turnstile-Token'],
+  allowedHeaders: ['Content-Type', 'X-Session-ID', 'X-Turnstile-Token', 'Authorization'],
 }));
 
 // Webhook routes (before body parsing — Stripe needs raw body)

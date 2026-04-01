@@ -13,6 +13,19 @@ export async function validate(ctx: PipelineContext): Promise<StageResult> {
   const { session, res } = ctx;
   const body = ctx.requestBody as ChatRequest;
 
+  // Consent must be granted before any message processing
+  if (session.consent !== 'granted') {
+    const message = session.consent === 'pending'
+      ? 'Consent is required before sending messages.'
+      : 'This session has declined consent and cannot send messages.';
+    res.status(403).json({
+      error: 'consent_required',
+      consent_state: session.consent,
+      message,
+    });
+    return { action: 'halt', ctx, reason: `consent_${session.consent}` };
+  }
+
   // Rate limiter checks
   const sessionLimit = checkSessionLimit(session.id);
   const ipLimit = checkIpLimit(session.ip_hash);

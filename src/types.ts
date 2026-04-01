@@ -10,6 +10,7 @@ export type GuardLevel = 0 | 1 | 2 | 3 | 4;
 
 export interface Session {
   id: string;
+  token_hash: string;
   status: SessionStatus;
   tier: SessionTier;
   language: Language;

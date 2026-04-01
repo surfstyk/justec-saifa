@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { createHash } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { getConfig } from '../config.js';
 import { getSessionStore, getActiveSessionCount, getQueueLength, addToQueue, removeFromQueue, promoteFromQueue } from './store-memory.js';
 import { persistSession, persistMessage } from '../db/conversations.js';
@@ -11,19 +11,33 @@ export function hashIp(ip: string): string {
   return createHash('sha256').update(ip + 'justec-salt').digest('hex').slice(0, 16);
 }
 
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export function verifySessionToken(session: Session, token: string): boolean {
+  const presented = Buffer.from(hashToken(token), 'hex');
+  const stored = Buffer.from(session.token_hash, 'hex');
+  if (presented.length !== stored.length) return false;
+  return timingSafeEqual(presented, stored);
+}
+
 export function createSession(opts: {
   language: Language;
   ipHash: string;
   referrer?: string;
   userAgent?: string;
   metadata?: Record<string, unknown>;
-}): { session: Session; status: SessionStatus; queuePosition?: number } {
+}): { session: Session; status: SessionStatus; sessionToken: string; queuePosition?: number } {
   const config = getConfig();
   const store = getSessionStore();
   const activeCount = getActiveSessionCount();
 
+  const sessionToken = randomBytes(32).toString('base64url');
+
   const session: Session = {
     id: uuidv4(),
+    token_hash: hashToken(sessionToken),
     status: 'active',
     tier: 'lobby',
     language: opts.language,
@@ -59,12 +73,12 @@ export function createSession(opts: {
     session.status = 'queued';
     store.set(session.id, session);
     const position = addToQueue(session.id);
-    return { session, status: 'queued', queuePosition: position };
+    return { session, status: 'queued', sessionToken, queuePosition: position };
   }
 
   store.set(session.id, session);
   recordSessionCreated();
-  return { session, status: 'active' };
+  return { session, status: 'active', sessionToken };
 }
 
 export function getSession(id: string): Session | undefined {

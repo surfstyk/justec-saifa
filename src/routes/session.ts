@@ -58,7 +58,7 @@ router.post('/api/session', async (req, res) => {
     }
   }
 
-  const { session, status, queuePosition } = createSession({
+  const { session, status, sessionToken, queuePosition } = createSession({
     language,
     ipHash,
     referrer: body.referrer,
@@ -69,6 +69,7 @@ router.post('/api/session', async (req, res) => {
   if (status === 'queued') {
     res.status(202).json({
       session_id: session.id,
+      session_token: sessionToken,
       status: 'queued',
       queue: {
         position: queuePosition,
@@ -87,6 +88,7 @@ router.post('/api/session', async (req, res) => {
 
   res.status(200).json({
     session_id: session.id,
+    session_token: sessionToken,
     status: 'active',
     greeting: {
       language,
