@@ -6,3 +6,4 @@ credentials/
 *.log
 .DS_Store
 surfstyk-notes/
+.tmp/
