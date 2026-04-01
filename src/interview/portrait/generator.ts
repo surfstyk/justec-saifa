@@ -17,41 +17,42 @@ export interface PortraitProvider {
 // ── Prompt Builder ────────────────────────────────────────
 
 /**
- * Map Blueprint persona fields → PORTRAIT_STYLE.md-compliant image generation prompt.
+ * Map Blueprint identity fields → PORTRAIT_STYLE.md-compliant image generation prompt.
  * The prompt encodes style anchor (studio photography, white background, seafoam accent),
- * agent identity (name, role, personality), and prop/clothing guidance.
+ * agent identity (name, gender, personality), and prop/clothing guidance.
  */
 export function buildPortraitPrompt(blueprint: Blueprint): string {
-  const gaps = blueprint.gaps;
-  const seed = blueprint.seed;
-  const shape = blueprint.shape;
+  const identity = blueprint.identity;
+  const discovery = blueprint.discovery;
 
-  // Infer agent role category for prop selection
-  const purpose = seed.purpose.toLowerCase();
-  const roleCategory = inferRoleCategory(purpose);
+  // Use visual_description from identity if available, otherwise build from context
+  const visualDesc = identity?.visual_description || 'Professional, approachable, mid-thirties';
+  const gender = identity?.gender || 'neutral';
+  const agentName = identity?.agent_name || 'the digital partner';
 
-  // Infer formality from persona style
-  const personaStyle = gaps?.persona.style?.toLowerCase() || '';
-  const formality = inferFormality(personaStyle);
+  // Infer role category from purpose for prop selection
+  const purpose = discovery.purpose.toLowerCase();
+  const roleCategory = inferRoleCategory(purpose, discovery.domain);
 
-  // Infer expression from persona traits
-  const traits = gaps?.persona.traits || [];
-  const expression = inferExpression(traits, personaStyle);
+  // Infer formality from personality
+  const communicationStyle = identity?.communication_style?.toLowerCase() || '';
+  const personalitySummary = identity?.personality_summary?.toLowerCase() || '';
+  const formality = inferFormality(communicationStyle, personalitySummary);
 
-  // Agent name for context
-  const agentName = gaps?.agent_name || 'the digital partner';
+  // Infer expression from personality traits
+  const traits = identity?.personality_traits || [];
+  const expression = inferExpression(traits, personalitySummary);
 
-  // Prop based on role
+  // Gender-appropriate pronoun for demographics description
+  const genderDesc = gender === 'male' ? 'A man' : gender === 'female' ? 'A woman' : 'A person';
+
+  // Prop based on domain/role
   const prop = getProp(roleCategory);
-
-  // Diversity signal — use agent name hash to vary demographics
-  const diversitySeed = hashString(agentName);
-  const demographics = getDemographics(diversitySeed);
 
   // Build the prompt
   const parts: string[] = [
     'Professional studio portrait photograph.',
-    `${demographics.description}.`,
+    `${genderDesc}. ${visualDesc}.`,
     `${expression} expression, eyes directed at the viewer.`,
     `${formality.clothing}.`,
     'Clean white studio background, no objects or environments.',
@@ -73,15 +74,16 @@ export function buildPortraitPrompt(blueprint: Blueprint): string {
 
 // ── Inference Helpers ─────────────────────────────────────
 
-function inferRoleCategory(purpose: string): string {
-  if (/briefing|email|inbox|calendar|assistant|schedule/.test(purpose)) return 'personal_assistant';
-  if (/market|trading|stock|finance|analytics|data/.test(purpose)) return 'market_analyst';
-  if (/content|writing|social|marketing|blog/.test(purpose)) return 'content';
-  if (/support|customer|help|ticket/.test(purpose)) return 'customer_support';
-  if (/sales|lead|crm|pipeline/.test(purpose)) return 'sales';
-  if (/research|study|report|analysis/.test(purpose)) return 'research';
-  if (/operations|ops|workflow|process/.test(purpose)) return 'operations';
-  if (/data|pipeline|etl|sync/.test(purpose)) return 'data_pipeline';
+function inferRoleCategory(purpose: string, domain: string): string {
+  const combined = `${purpose} ${domain}`.toLowerCase();
+  // Check specific domains first, then broader categories
+  if (/fitness|training|workout|gym|health|diet|nutrition/.test(combined)) return 'fitness';
+  if (/market|trading|stock|finance|analytics/.test(combined)) return 'market_analyst';
+  if (/content|writing|social|marketing|blog|creative/.test(combined)) return 'content';
+  if (/research|study|report|learning/.test(combined)) return 'research';
+  if (/support|customer|ticket/.test(combined)) return 'customer_support';
+  if (/sales|lead|crm|pipeline/.test(combined)) return 'sales';
+  if (/briefing|email|inbox|calendar|assistant|schedule|work/.test(combined)) return 'personal_assistant';
   return 'other';
 }
 
@@ -90,22 +92,27 @@ interface FormalityResult {
   clothing: string;
 }
 
-function inferFormality(style: string): FormalityResult {
-  if (/formal|professional|corporate|executive/.test(style)) {
+function inferFormality(communicationStyle: string, personalitySummary: string): FormalityResult {
+  const combined = `${communicationStyle} ${personalitySummary}`;
+  if (/formal|professional|corporate|executive|polished/.test(combined)) {
     return { level: 'formal', clothing: 'Wearing a well-fitted blazer over a collared shirt or blouse, navy or charcoal tones' };
   }
-  if (/casual|relaxed|friendly|approachable/.test(style)) {
+  if (/casual|relaxed|friendly|sporty|laid-back/.test(combined)) {
     return { level: 'casual', clothing: 'Wearing a relaxed open-collar top or clean knit, warm neutral tones, no jacket' };
+  }
+  if (/athletic|coach|trainer|fitness/.test(combined)) {
+    return { level: 'athletic', clothing: 'Wearing a clean, fitted athletic top or sport zip-up, dark tones' };
   }
   return { level: 'adaptive', clothing: 'Wearing smart-casual attire, clean collar, relaxed blazer or no jacket, neutral professional tones' };
 }
 
-function inferExpression(traits: string[], style: string): string {
-  const combined = [...traits.map(t => t.toLowerCase()), style].join(' ');
+function inferExpression(traits: string[], personalitySummary: string): string {
+  const combined = [...traits.map(t => t.toLowerCase()), personalitySummary].join(' ');
 
-  if (/warm|friendly|patient|kind/.test(combined)) return 'Genuine warm smile, soft eyes, approachable and open';
-  if (/direct|analytical|precise|sharp/.test(combined)) return 'Confident, composed look with subtle warmth';
-  if (/witty|humor|playful|energetic/.test(combined)) return 'Bright smile, eyes with a hint of energy and spark';
+  if (/warm|friendly|patient|kind|gentle/.test(combined)) return 'Genuine warm smile, soft eyes, approachable and open';
+  if (/direct|analytical|precise|sharp|no-nonsense/.test(combined)) return 'Confident, composed look with subtle warmth';
+  if (/witty|humor|playful|energetic|fun/.test(combined)) return 'Bright smile, eyes with a hint of energy and spark';
+  if (/tough|coach|demanding|competitive/.test(combined)) return 'Strong, determined look with confident warmth';
   if (/creative|expressive|artistic/.test(combined)) return 'Engaged, slightly animated, creative energy';
   return 'Warm professional smile, approachable and confident';
 }
@@ -117,61 +124,16 @@ interface PropResult {
 
 function getProp(roleCategory: string): PropResult {
   const props: Record<string, PropResult> = {
+    fitness: { item: null, accent: 'a seafoam sport watch or fitness band.' },
     personal_assistant: { item: 'a tablet with a seafoam teal case', accent: 'a seafoam teal tablet case.' },
     market_analyst: { item: 'a tablet showing charts', accent: 'thin-frame glasses with a subtle seafoam temple accent.' },
     content: { item: 'a leather-bound notebook', accent: 'a pen with a seafoam clip.' },
     customer_support: { item: null, accent: 'a small seafoam lapel pin.' },
     sales: { item: null, accent: 'a seafoam pocket square edge.' },
     research: { item: 'a notebook', accent: 'a small seafoam brooch.' },
-    operations: { item: 'a tablet', accent: 'a seafoam tablet case.' },
-    data_pipeline: { item: null, accent: 'a subtle seafoam bracelet.' },
     other: { item: null, accent: 'a small seafoam lapel pin.' },
   };
   return props[roleCategory] || props.other;
-}
-
-// ── Diversity ─────────────────────────────────────────────
-
-interface Demographics {
-  description: string;
-}
-
-function getDemographics(seed: number): Demographics {
-  // Deterministic but varied based on agent name
-  const ageRange = ['late twenties', 'early thirties', 'mid-thirties', 'early forties', 'mid-forties', 'early fifties'];
-  const presentations = [
-    'A woman',
-    'A man',
-    'A woman',
-    'A man',
-    'A woman',
-    'A man',
-  ];
-  const descriptors = [
-    'with warm brown skin and curly dark hair',
-    'with light skin and short auburn hair',
-    'with dark skin and natural hair styled elegantly',
-    'with olive skin and dark wavy hair',
-    'with fair skin and straight dark hair',
-    'with medium-brown skin and close-cropped hair',
-  ];
-
-  const age = ageRange[seed % ageRange.length];
-  const presentation = presentations[seed % presentations.length];
-  const descriptor = descriptors[(seed * 3 + 1) % descriptors.length];
-
-  return {
-    description: `${presentation} in her/his ${age}, ${descriptor}`,
-  };
-}
-
-function hashString(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0; // Convert to 32-bit int
-  }
-  return Math.abs(hash);
 }
 
 // ── Providers ─────────────────────────────────────────────

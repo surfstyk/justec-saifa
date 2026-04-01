@@ -52,15 +52,15 @@ let currentRound = 0;
 // Simulate a minimal lobby context based on language
 const lobbyContextByLang: Record<string, LLMMessage[]> = {
   en: [
-    { role: 'user', content: 'I want to build an AI agent for my business.' },
+    { role: 'user', content: 'I\'m interested in having a personal assistant built.' },
     { role: 'assistant', content: 'That sounds exciting! Let me connect you to our design studio.' },
   ],
   de: [
-    { role: 'user', content: 'Ich möchte einen KI-Agenten für mein Unternehmen bauen.' },
+    { role: 'user', content: 'Ich interessiere mich für einen persönlichen Assistenten.' },
     { role: 'assistant', content: 'Das klingt spannend! Lass mich dich mit unserem Design-Studio verbinden.' },
   ],
   pt: [
-    { role: 'user', content: 'Quero construir um agente de IA para o meu negócio.' },
+    { role: 'user', content: 'Estou interessado em ter um assistente pessoal.' },
     { role: 'assistant', content: 'Isso parece emocionante! Deixe-me conectar você ao nosso estúdio de design.' },
   ],
 };
@@ -97,7 +97,7 @@ function printTokens(usage: TokenUsage) {
 }
 
 function printRound(round: number) {
-  const names = ['', 'The Seed', 'The Shape', 'The Gaps', 'Playback & Confirm'];
+  const names = ['', 'Discovery', 'Agent Identity', 'Playback & Confirm'];
   console.log(`\n${BOLD}${MAGENTA}  ▶ Round ${round}: ${names[round] || '???'}${RESET}\n`);
 }
 

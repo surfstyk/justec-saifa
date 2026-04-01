@@ -1,80 +1,29 @@
 import { z } from 'zod';
 
-// ── Round 1: The Seed ─────────────────────────────────────
+// ── Round 1: Discovery ───────────────────────────────────
 
-export const SeedSchema = z.object({
-  domain: z.string().min(1).describe('Industry or business area'),
-  purpose: z.string().min(1).describe('What the agent should do — one-sentence core purpose'),
-  identity: z.object({
-    prospect_name: z.string().nullable().describe('Prospect name if captured'),
-    company: z.string().nullable().describe('Company name if captured'),
-    role: z.string().nullable().describe('Role or title if captured'),
-    industry: z.string().nullable().describe('Industry if captured'),
-  }),
-  complexity_signal: z.enum(['simple', 'moderate', 'complex']).describe('Rough complexity assessment'),
-  raw_needs: z.string().describe('Prospect\'s own words describing what they need'),
+export const DiscoverySchema = z.object({
+  owner_name: z.string().min(1).describe('Prospect first name'),
+  owner_about: z.string().min(1).describe('What they shared about themselves — role, work, life context'),
+  domain: z.string().min(1).describe('Where the assistant lives — work, fitness, research, creative, personal, generalist, etc.'),
+  purpose: z.string().min(1).describe('What they want help with, in their own words'),
 });
 
-// ── Round 2: The Shape ────────────────────────────────────
+// ── Round 2: Agent Identity ──────────────────────────────
 
-export const ShapeSchema = z.object({
-  inputs: z.array(z.object({
-    source: z.string().min(1),
-    description: z.string().min(1),
-  })).min(1).describe('Data sources the agent needs'),
-
-  logic: z.object({
-    autonomous_actions: z.array(z.string()).describe('What the agent decides on its own'),
-    approval_required: z.array(z.string()).describe('What needs human confirmation'),
-  }),
-
-  output: z.object({
-    channels: z.array(z.string()).min(1).describe('Delivery channels (Telegram, email, Slack, etc.)'),
-    audience: z.string().describe('Who sees the output (prospect, their team, customers)'),
-  }),
-
-  rhythm: z.object({
-    schedule: z.string().min(1).describe('Frequency and timing (daily at 06:00, real-time, etc.)'),
-    specific_times: z.array(z.string()).optional().describe('Specific times mentioned'),
-  }),
-
-  language: z.object({
-    primary: z.string().min(1).describe('Primary language'),
-    additional: z.array(z.string()).optional().describe('Additional languages needed'),
-  }),
-
-  budget: z.object({
-    ceiling: z.string().nullable().describe('Monthly budget ceiling if stated'),
-    sensitivity: z.enum(['price_sensitive', 'value_focused', 'not_discussed']),
-  }),
-
-  existing_assets: z.array(z.string()).optional().describe('APIs, servers, tools already in place'),
-});
-
-// ── Round 3: The Gaps ─────────────────────────────────────
-
-export const GapsSchema = z.object({
-  failure_handling: z.object({
-    strategy: z.string().min(1).describe('What happens when things go wrong'),
-    escalation: z.string().describe('When the agent should escalate to the human'),
-  }),
-
-  safety_rails: z.array(z.object({
-    rule: z.string().min(1),
-    rationale: z.string().optional(),
-  })).describe('Things the agent must never do or must always check'),
-
-  persona: z.object({
-    style: z.string().describe('Communication style (professional, casual, terse, friendly)'),
-    traits: z.array(z.string()).optional().describe('Personality traits mentioned'),
-  }),
-
+export const IdentitySchema = z.object({
   agent_name: z.string().min(1).describe('The chosen name for the agent'),
-
-  additional_needs: z.array(z.string()).optional().describe('Anything the prospect raised that was not covered'),
+  gender: z.enum(['male', 'female', 'neutral']).describe('Agent gender/presentation'),
+  personality_summary: z.string().min(1).describe('Rich free-form personality description — for DNA seeding and proposal narrative'),
+  personality_traits: z.array(z.string()).min(1).describe('Key personality tags: direct, warm, witty, patient, etc.'),
+  communication_style: z.string().min(1).describe('How the agent talks — tone, register, energy'),
+  archetype: z.string().nullable().describe('Character reference if given: Pepper Potts energy, JARVIS-like, tough coach, etc.'),
+  visual_description: z.string().min(1).describe('Physical description for portrait generation — age impression, style, vibe'),
+  primary_channel: z.string().min(1).describe('How owner will talk to agent: WhatsApp, Telegram, etc.'),
+  languages: z.array(z.string()).min(1).describe('Languages the agent should speak'),
 });
 
-// ── Round 4: Confirmed ────────────────────────────────────
+// ── Round 3: Confirmed ──────────────────────────────────
 
 export const ConfirmedSchema = z.object({
   playback_text: z.string().min(1).describe('The narrative playback Maren delivered, in prospect\'s language'),
@@ -85,15 +34,13 @@ export const ConfirmedSchema = z.object({
 // ── Full Blueprint ────────────────────────────────────────
 
 export const BlueprintSchema = z.object({
-  seed: SeedSchema,
-  shape: ShapeSchema.optional(),
-  gaps: GapsSchema.optional(),
+  discovery: DiscoverySchema,
+  identity: IdentitySchema.optional(),
   confirmed: ConfirmedSchema.optional(),
 });
 
-export type Seed = z.infer<typeof SeedSchema>;
-export type Shape = z.infer<typeof ShapeSchema>;
-export type Gaps = z.infer<typeof GapsSchema>;
+export type Discovery = z.infer<typeof DiscoverySchema>;
+export type Identity = z.infer<typeof IdentitySchema>;
 export type Confirmed = z.infer<typeof ConfirmedSchema>;
 export type Blueprint = z.infer<typeof BlueprintSchema>;
 
@@ -101,40 +48,30 @@ export type Blueprint = z.infer<typeof BlueprintSchema>;
 // Validate that the required fields are present for a given round.
 
 const Round1Schema = z.object({
-  seed: SeedSchema,
-  shape: z.undefined().optional(),
-  gaps: z.undefined().optional(),
+  discovery: DiscoverySchema,
+  identity: z.undefined().optional(),
   confirmed: z.undefined().optional(),
 });
 
 const Round2Schema = z.object({
-  seed: SeedSchema,
-  shape: ShapeSchema,
-  gaps: z.undefined().optional(),
+  discovery: DiscoverySchema,
+  identity: IdentitySchema,
   confirmed: z.undefined().optional(),
 });
 
 const Round3Schema = z.object({
-  seed: SeedSchema,
-  shape: ShapeSchema,
-  gaps: GapsSchema,
-  confirmed: z.undefined().optional(),
-});
-
-const Round4Schema = z.object({
-  seed: SeedSchema,
-  shape: ShapeSchema,
-  gaps: GapsSchema,
+  discovery: DiscoverySchema,
+  identity: IdentitySchema,
   confirmed: ConfirmedSchema,
 });
 
-const roundSchemas = [Round1Schema, Round2Schema, Round3Schema, Round4Schema] as const;
+const roundSchemas = [Round1Schema, Round2Schema, Round3Schema] as const;
 
 /**
  * Validate a Blueprint at a specific round level.
- * Round 1: only seed required. Round 4: all sections required.
+ * Round 1: only discovery required. Round 3: all sections required.
  * Returns { success, data?, error? }.
  */
-export function validateAtRound(data: unknown, round: 1 | 2 | 3 | 4) {
+export function validateAtRound(data: unknown, round: 1 | 2 | 3) {
   return roundSchemas[round - 1].safeParse(data);
 }

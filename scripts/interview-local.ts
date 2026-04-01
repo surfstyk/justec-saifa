@@ -54,15 +54,15 @@ const toolLog: Array<{ turn: number; name: string; success: boolean }> = [];
 
 const lobbyContextByLang: Record<string, LLMMessage[]> = {
   en: [
-    { role: 'user', content: 'I want to build an AI agent for my business.' },
+    { role: 'user', content: 'I\'m interested in having a personal assistant built.' },
     { role: 'assistant', content: 'That sounds exciting! Let me connect you to our design studio — we\'ll help you design exactly the right partner for what you need.' },
   ],
   de: [
-    { role: 'user', content: 'Ich möchte einen KI-Agenten für mein Unternehmen bauen.' },
+    { role: 'user', content: 'Ich interessiere mich für einen persönlichen Assistenten.' },
     { role: 'assistant', content: 'Das klingt spannend! Lass mich dich mit unserem Design-Studio verbinden.' },
   ],
   pt: [
-    { role: 'user', content: 'Quero construir um agente de IA para o meu negócio.' },
+    { role: 'user', content: 'Estou interessado em ter um assistente pessoal.' },
     { role: 'assistant', content: 'Isso parece emocionante! Deixe-me conectar você ao nosso estúdio de design.' },
   ],
 };
@@ -87,10 +87,8 @@ Rules:
 - After seeing the tool result, continue the conversation naturally
 
 Available tools:
-1. round_complete — args: { round: 1-4, blueprint: { ... } } — see Blueprint Schema in system prompt for exact fields
-2. check_capabilities — args: { capability: string, context?: string }
-3. estimate_cost — args: { complexity: "simple"|"moderate"|"complex", integrations_count: number, schedule_frequency: "daily"|"hourly"|"realtime"|"weekly" }
-4. check_feasibility — args: { request: string, concern?: string }
+1. round_complete — args: { round: 1-3, blueprint: { ... } } — see Blueprint Schema in system prompt for exact fields
+2. check_feasibility — args: { request: string, concern?: string }
 
 For round_complete, include the CUMULATIVE blueprint. Use the EXACT field names from the Blueprint Schema section above.
 `;
@@ -290,7 +288,7 @@ function runTurn(userMessage: string): string {
       console.log(`${D}  [result] ${JSON.stringify(result).slice(0, 120)}${R}`);
 
       if (tc.name === 'round_complete' && result.success) {
-        const names = ['', 'The Seed', 'The Shape', 'The Gaps', 'Playback & Confirm'];
+        const names = ['', 'Discovery', 'Agent Identity', 'Playback & Confirm'];
         console.log(`\n${B}${MAGENTA}  ▶ Round ${result.round}: ${names[result.round as number] || ''} — Complete${R}\n`);
       }
 
@@ -367,7 +365,7 @@ function prompt() {
     }
 
     if (trimmed === '/status') {
-      console.log(`${D}  Round: ${currentRound}/4 | Turns: ${turnCount} | Tools used: ${toolLog.length}${R}`);
+      console.log(`${D}  Round: ${currentRound}/3 | Turns: ${turnCount} | Tools used: ${toolLog.length}${R}`);
       prompt();
       return;
     }

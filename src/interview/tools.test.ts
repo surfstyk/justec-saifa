@@ -1,41 +1,34 @@
 import { describe, it, expect } from 'vitest';
 import {
   handleRoundComplete,
-  handleCheckCapabilities,
-  handleEstimateCost,
   handleCheckFeasibility,
   handleInterviewTool,
   INTERVIEW_TOOLS,
 } from './tools.js';
 
-// ── Sample Blueprint data (reused from blueprint.test.ts) ─
+// ── Sample Blueprint data ────────────────────────────────
 
-const validSeed = {
-  domain: 'Real estate',
-  purpose: 'Morning briefing agent',
-  identity: { prospect_name: 'Marcus', company: 'Berlin Properties', role: 'MD', industry: 'Real estate' },
-  complexity_signal: 'moderate',
-  raw_needs: 'I need help with morning email triage.',
+const validDiscovery = {
+  owner_name: 'Marcus',
+  owner_about: 'Managing director at a real estate firm in Berlin.',
+  domain: 'work',
+  purpose: 'I need help with morning email triage.',
 };
 
-const validShape = {
-  inputs: [{ source: 'Gmail', description: 'Inbox triage' }],
-  logic: { autonomous_actions: ['Categorize emails'], approval_required: ['Send replies'] },
-  output: { channels: ['Telegram'], audience: 'Marcus only' },
-  rhythm: { schedule: 'Daily at 06:00' },
-  language: { primary: 'German' },
-  budget: { ceiling: '50 EUR/month', sensitivity: 'value_focused' },
-};
-
-const validGaps = {
-  failure_handling: { strategy: 'Retry then alert', escalation: 'Alert after 2h' },
-  safety_rails: [{ rule: 'Never send emails without approval' }],
-  persona: { style: 'Professional but warm' },
-  agent_name: 'Elena Vasquez',
+const validIdentity = {
+  agent_name: 'Lena',
+  gender: 'female',
+  personality_summary: 'Calm, organized, warm but efficient. Dry humor.',
+  personality_traits: ['organized', 'warm', 'efficient'],
+  communication_style: 'Professional but approachable',
+  archetype: 'Pepper Potts energy',
+  visual_description: 'Early 30s professional woman, smart casual.',
+  primary_channel: 'Telegram',
+  languages: ['German', 'English'],
 };
 
 const validConfirmed = {
-  playback_text: 'Elena Vasquez wakes up at 6 AM every morning...',
+  playback_text: 'Lena is a calm, organized partner who keeps things running...',
   approved: true,
   adjustments: [],
 };
@@ -44,12 +37,12 @@ const validConfirmed = {
 
 describe('round_complete', () => {
   it('round 1 valid — returns success', () => {
-    const result = handleRoundComplete({ round: 1, blueprint: { seed: validSeed } });
+    const result = handleRoundComplete({ round: 1, blueprint: { discovery: validDiscovery } });
     expect(result.result.success).toBe(true);
     expect(result.result.round).toBe(1);
   });
 
-  it('round 1 missing seed — returns missing fields', () => {
+  it('round 1 missing discovery — returns missing fields', () => {
     const result = handleRoundComplete({ round: 1, blueprint: {} });
     expect(result.result.success).toBe(false);
     expect(result.result.missing_fields).toBeDefined();
@@ -58,44 +51,36 @@ describe('round_complete', () => {
   it('round 2 valid — returns success', () => {
     const result = handleRoundComplete({
       round: 2,
-      blueprint: { seed: validSeed, shape: validShape },
+      blueprint: { discovery: validDiscovery, identity: validIdentity },
     });
     expect(result.result.success).toBe(true);
     expect(result.result.round).toBe(2);
   });
 
-  it('round 2 missing shape — returns missing fields', () => {
-    const result = handleRoundComplete({ round: 2, blueprint: { seed: validSeed } });
+  it('round 2 missing identity — returns missing fields', () => {
+    const result = handleRoundComplete({ round: 2, blueprint: { discovery: validDiscovery } });
     expect(result.result.success).toBe(false);
   });
 
-  it('round 3 valid — returns success', () => {
+  it('round 3 valid — returns finalization message', () => {
     const result = handleRoundComplete({
       round: 3,
-      blueprint: { seed: validSeed, shape: validShape, gaps: validGaps },
-    });
-    expect(result.result.success).toBe(true);
-  });
-
-  it('round 4 valid — returns finalization message', () => {
-    const result = handleRoundComplete({
-      round: 4,
-      blueprint: { seed: validSeed, shape: validShape, gaps: validGaps, confirmed: validConfirmed },
+      blueprint: { discovery: validDiscovery, identity: validIdentity, confirmed: validConfirmed },
     });
     expect(result.result.success).toBe(true);
     expect(result.result.message).toContain('finalized');
   });
 
-  it('round 4 missing confirmed — returns missing fields', () => {
+  it('round 3 missing confirmed — returns missing fields', () => {
     const result = handleRoundComplete({
-      round: 4,
-      blueprint: { seed: validSeed, shape: validShape, gaps: validGaps },
+      round: 3,
+      blueprint: { discovery: validDiscovery, identity: validIdentity },
     });
     expect(result.result.success).toBe(false);
   });
 
   it('invalid round number — returns error', () => {
-    const result = handleRoundComplete({ round: 5, blueprint: { seed: validSeed } });
+    const result = handleRoundComplete({ round: 4, blueprint: { discovery: validDiscovery } });
     expect(result.result.success).toBe(false);
     expect(result.result.error).toBeDefined();
   });
@@ -103,76 +88,6 @@ describe('round_complete', () => {
   it('no blueprint — returns error', () => {
     const result = handleRoundComplete({ round: 1 });
     expect(result.result.success).toBe(false);
-  });
-});
-
-// ── check_capabilities ────────────────────────────────────
-
-describe('check_capabilities', () => {
-  it('known capability (Gmail) — returns feasible with details', () => {
-    const result = handleCheckCapabilities({ capability: 'Gmail', context: 'Read inbox' });
-    expect(result.result.feasible).toBe(true);
-    expect(result.result.complexity).toBeDefined();
-    expect(result.result.notes).toBeDefined();
-  });
-
-  it('known capability (Telegram) — trivial complexity', () => {
-    const result = handleCheckCapabilities({ capability: 'Telegram bot' });
-    expect(result.result.feasible).toBe(true);
-    expect(result.result.complexity).toBe('trivial');
-  });
-
-  it('known capability (WhatsApp) — custom complexity', () => {
-    const result = handleCheckCapabilities({ capability: 'WhatsApp' });
-    expect(result.result.feasible).toBe(true);
-    expect(result.result.complexity).toBe('custom');
-  });
-
-  it('unknown capability — feasible but custom', () => {
-    const result = handleCheckCapabilities({ capability: 'SAP ERP' });
-    expect(result.result.feasible).toBe(true);
-    expect(result.result.complexity).toBe('custom');
-    expect((result.result.notes as string)).toContain('custom development');
-  });
-
-  it('empty capability — returns error', () => {
-    const result = handleCheckCapabilities({ capability: '' });
-    expect(result.result.error).toBe(true);
-  });
-});
-
-// ── estimate_cost ─────────────────────────────────────────
-
-describe('estimate_cost', () => {
-  it('simple daily agent — returns low range', () => {
-    const result = handleEstimateCost({
-      complexity: 'simple',
-      integrations_count: 2,
-      schedule_frequency: 'daily',
-    });
-    expect(result.result.range_eur).toBeDefined();
-    const range = result.result.range_eur as { low: number; high: number };
-    expect(range.low).toBeGreaterThan(0);
-    expect(range.high).toBeGreaterThan(range.low);
-  });
-
-  it('complex realtime agent — returns high range', () => {
-    const result = handleEstimateCost({
-      complexity: 'complex',
-      integrations_count: 5,
-      schedule_frequency: 'realtime',
-    });
-    const range = result.result.range_eur as { low: number; high: number };
-    expect(range.high).toBeGreaterThan(200);
-  });
-
-  it('includes internal-only note', () => {
-    const result = handleEstimateCost({
-      complexity: 'moderate',
-      integrations_count: 1,
-      schedule_frequency: 'daily',
-    });
-    expect((result.result.note as string)).toContain('NOT share');
   });
 });
 
@@ -198,18 +113,8 @@ describe('check_feasibility', () => {
 
 describe('handleInterviewTool', () => {
   it('routes round_complete correctly', () => {
-    const result = handleInterviewTool('round_complete', { round: 1, blueprint: { seed: validSeed } });
+    const result = handleInterviewTool('round_complete', { round: 1, blueprint: { discovery: validDiscovery } });
     expect(result.result.success).toBe(true);
-  });
-
-  it('routes check_capabilities correctly', () => {
-    const result = handleInterviewTool('check_capabilities', { capability: 'Telegram' });
-    expect(result.result.feasible).toBe(true);
-  });
-
-  it('routes estimate_cost correctly', () => {
-    const result = handleInterviewTool('estimate_cost', { complexity: 'simple', integrations_count: 1, schedule_frequency: 'daily' });
-    expect(result.result.range_eur).toBeDefined();
   });
 
   it('routes check_feasibility correctly', () => {
@@ -226,8 +131,8 @@ describe('handleInterviewTool', () => {
 // ── Tool definitions ──────────────────────────────────────
 
 describe('INTERVIEW_TOOLS', () => {
-  it('exports 4 tool definitions', () => {
-    expect(INTERVIEW_TOOLS).toHaveLength(4);
+  it('exports 2 tool definitions', () => {
+    expect(INTERVIEW_TOOLS).toHaveLength(2);
   });
 
   it('all tools have name, description, and parameters', () => {
