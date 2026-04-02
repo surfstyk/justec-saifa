@@ -316,7 +316,7 @@ function runTurn(userMessage: string): string {
 function printSummary() {
   console.log(`\n${B}${CYAN}═══════════════════════════════════════════════════${R}`);
   console.log(`${B}  Session Summary${R}`);
-  console.log(`${D}  Turns: ${turnCount} | Last round: ${currentRound}/4 | Model: ${modelFlag}${R}`);
+  console.log(`${D}  Turns: ${turnCount} | Last round: ${currentRound}/3 | Model: ${modelFlag}${R}`);
   console.log(`${D}  Language: ${lang} | History messages: ${conversationHistory.length}${R}`);
 
   if (toolLog.length > 0) {
