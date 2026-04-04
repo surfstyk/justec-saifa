@@ -393,14 +393,14 @@ The booking flow with payment is:
 1. Visitor qualifies → promoted to meeting_room (invisible)
 2. LLM calls check_calendar_availability → calendar_slots structured message
 3. Visitor selects slot → slot_selected action
-4. LLM calls request_phone → phone_request structured message
-5. Visitor submits phone → phone_submitted action
-6. LLM calls request_payment → payment_request structured message
-7. Visitor clicks "Pay with Card" or "Pay with PayPal" → opens external checkout
-8. Visitor completes payment on Stripe/PayPal hosted page
-9. Stripe/PayPal sends webhook to middleware → calendar event created, Trello card moved
-10. Visitor redirected to surfstyk.com/?payment=success
-11. Frontend polls GET /api/session/:id/state → payment.status: "completed"
+4. LLM calls request_payment → payment_request structured message
+5. Visitor clicks "Pay with Card" or "Pay with PayPal" → opens external checkout
+6. Visitor completes payment on Stripe/PayPal hosted page
+7. Stripe/PayPal sends webhook to middleware → calendar event created, Trello card moved
+8. Visitor redirected to surfstyk.com/?payment=success
+9. Frontend polls GET /api/session/:id/state → payment.status: "completed"
+10. LLM calls request_phone → phone_request structured message (optional, soft ask)
+11. Visitor submits phone → phone_submitted action (or declines gracefully)
 ```
 
 ### State endpoint — payment fields

@@ -41,7 +41,7 @@ function getMeetingRoomTools(): ToolDefinition[] {
     },
     {
       name: 'request_payment',
-      description: `Request a deposit payment for the ${serviceName}. Call this after the visitor has selected a time slot and provided their contact details.`,
+      description: `Request a deposit payment for the ${serviceName}. Call this after the visitor has selected a time slot.`,
       parameters: {
         type: 'object',
         properties: {
@@ -89,23 +89,22 @@ export function buildMeetingRoomPrompt(session: Session): {
   const tools: ToolDefinition[] = [SIGNAL_TOOL, PRESENT_PRODUCT_TOOL];
 
   if (session.payment_status !== 'completed') {
-    const hasPhone = !!session.metadata?.phone;
-    const hasHolds = hasPhone && !!session.metadata?.slot_holds
+    const hasHolds = !!session.metadata?.slot_holds
       && Object.keys(session.metadata.slot_holds as Record<string, string>).length > 0;
 
     for (const tool of getMeetingRoomTools()) {
       switch (tool.name) {
-        case 'request_phone':
+        case 'check_calendar_availability':
           // Always available — first booking step after agreement
           tools.push(tool);
           break;
-        case 'check_calendar_availability':
-          // Only after phone is captured
-          if (hasPhone) tools.push(tool);
-          break;
         case 'request_payment':
-          // Only after calendar slots have been shown (holds exist)
+          // Only after calendar slots have been held
           if (hasHolds) tools.push(tool);
+          break;
+        case 'request_phone':
+          // Always available — post-payment contact capture or fallback for non-bookers
+          tools.push(tool);
           break;
       }
     }

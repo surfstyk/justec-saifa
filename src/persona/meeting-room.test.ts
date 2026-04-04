@@ -54,23 +54,10 @@ describe('Meeting Room Prompt Builder', () => {
     expect(toolNames).toContain('request_payment');
   });
 
-  it('4. phone not captured → request_phone available, calendar locked', () => {
+  it('4. no phone, no holds → calendar and phone available, payment locked', () => {
     const session = makeSession({
       tier: 'meeting_room',
       metadata: {},
-      history: [],
-    });
-    const { tools } = buildMeetingRoomPrompt(session);
-    const toolNames = tools.map(t => t.name);
-    expect(toolNames).toContain('request_phone');
-    expect(toolNames).not.toContain('check_calendar_availability');
-    expect(toolNames).not.toContain('request_payment');
-  });
-
-  it('5. phone captured → calendar available, payment locked', () => {
-    const session = makeSession({
-      tier: 'meeting_room',
-      metadata: { phone: '+1234567890' },
       history: [],
     });
     const { tools } = buildMeetingRoomPrompt(session);
@@ -80,7 +67,20 @@ describe('Meeting Room Prompt Builder', () => {
     expect(toolNames).not.toContain('request_payment');
   });
 
-  it('6. phone + slot held → payment available', () => {
+  it('5. slot held, no phone → payment available', () => {
+    const session = makeSession({
+      tier: 'meeting_room',
+      metadata: { slot_holds: { 'slot-abc': 'event-123' } },
+      history: [],
+    });
+    const { tools } = buildMeetingRoomPrompt(session);
+    const toolNames = tools.map(t => t.name);
+    expect(toolNames).toContain('request_phone');
+    expect(toolNames).toContain('check_calendar_availability');
+    expect(toolNames).toContain('request_payment');
+  });
+
+  it('6. phone + slot held → all tools available (phone does not block)', () => {
     const session = makeSession({
       tier: 'meeting_room',
       metadata: { phone: '+1234567890', slot_holds: { 'slot-abc': 'event-123' } },
@@ -88,6 +88,8 @@ describe('Meeting Room Prompt Builder', () => {
     });
     const { tools } = buildMeetingRoomPrompt(session);
     const toolNames = tools.map(t => t.name);
+    expect(toolNames).toContain('request_phone');
+    expect(toolNames).toContain('check_calendar_availability');
     expect(toolNames).toContain('request_payment');
   });
 
